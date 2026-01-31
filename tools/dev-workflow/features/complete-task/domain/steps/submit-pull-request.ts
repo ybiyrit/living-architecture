@@ -25,11 +25,29 @@ interface CIResult {
 export interface SubmitPRDeps {
   uncommittedFiles: () => Promise<string[]>
   push: () => Promise<void>
-  headSha: () => Promise<string>
   baseBranch: () => Promise<string>
   getPR: (prNumber: number) => Promise<PRInfo>
   createPR: (opts: CreatePROptions) => Promise<PRInfo>
-  watchCI: (prNumber: number, headSha: string) => Promise<CIResult>
+  watchCI: (prNumber: number) => CIResult | Promise<CIResult>
+}
+
+async function resolvePR(
+  ctx: CompleteTaskContext,
+  deps: SubmitPRDeps,
+  baseBranch: string,
+): Promise<PRInfo> {
+  if (ctx.prMode === 'update' && ctx.prNumber) {
+    return deps.getPR(ctx.prNumber)
+  }
+  if (!ctx.prTitle || !ctx.prBody) {
+    throw new WorkflowError('PR title and body are required in create mode')
+  }
+  return deps.createPR({
+    title: ctx.prTitle,
+    body: ctx.prBody,
+    branch: ctx.branch,
+    base: baseBranch,
+  })
 }
 
 export function createSubmitPRStep(deps: SubmitPRDeps): Step<CompleteTaskContext> {
@@ -45,22 +63,14 @@ export function createSubmitPRStep(deps: SubmitPRDeps): Step<CompleteTaskContext
       }
       await deps.push()
 
-      const headSha = await deps.headSha()
       const baseBranchName = await deps.baseBranch()
 
-      const pr = ctx.prNumber
-        ? await deps.getPR(ctx.prNumber)
-        : await deps.createPR({
-          title: ctx.prTitle,
-          body: ctx.prBody,
-          branch: ctx.branch,
-          base: baseBranchName,
-        })
+      const pr = await resolvePR(ctx, deps, baseBranchName)
 
       ctx.prUrl = pr.url
       ctx.prNumber = pr.number
 
-      const ciResult = await deps.watchCI(pr.number, headSha)
+      const ciResult = await deps.watchCI(pr.number)
 
       if (ciResult.failed) {
         return failure({

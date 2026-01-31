@@ -7,7 +7,6 @@ import type { CompleteTaskContext } from '../task-to-complete'
 const mockGit = {
   uncommittedFiles: vi.fn(),
   push: vi.fn(),
-  headSha: vi.fn(),
   baseBranch: vi.fn(),
 }
 
@@ -20,7 +19,6 @@ const mockGitHub = {
 const submitPR = createSubmitPRStep({
   uncommittedFiles: mockGit.uncommittedFiles,
   push: mockGit.push,
-  headSha: mockGit.headSha,
   baseBranch: mockGit.baseBranch,
   getPR: mockGitHub.getPR,
   createPR: mockGitHub.createPR,
@@ -31,6 +29,7 @@ function createContext(overrides: Partial<CompleteTaskContext> = {}): CompleteTa
   return {
     branch: 'feature-branch',
     reviewDir: './test-review',
+    prMode: 'create',
     hasIssue: false,
     prTitle: 'T',
     prBody: 'B',
@@ -43,7 +42,6 @@ describe('submitPR', () => {
     vi.clearAllMocks()
     mockGit.uncommittedFiles.mockResolvedValue([])
     mockGit.push.mockResolvedValue(undefined)
-    mockGit.headSha.mockResolvedValue('abc123')
     mockGit.baseBranch.mockResolvedValue('main')
     mockGitHub.watchCI.mockResolvedValue({
       failed: false,
@@ -93,17 +91,32 @@ describe('submitPR', () => {
     expect(ctx.prNumber).toBe(42)
   })
 
-  it('gets existing PR when PR number provided', async () => {
+  it('gets existing PR when PR number provided in update mode', async () => {
     mockGitHub.getPR.mockResolvedValue({
       number: 100,
       url: 'https://pr/100',
     })
-    const ctx = createContext({ prNumber: 100 })
+    const ctx = createContext({
+      prNumber: 100,
+      prMode: 'update',
+    })
 
     await submitPR.execute(ctx)
 
     expect(mockGitHub.getPR).toHaveBeenCalledWith(100)
     expect(mockGitHub.createPR).not.toHaveBeenCalled()
+  })
+
+  it('throws when create mode has no title or body', async () => {
+    const ctx = createContext({
+      prMode: 'create',
+      prTitle: undefined,
+      prBody: undefined,
+    })
+
+    await expect(submitPR.execute(ctx)).rejects.toThrow(
+      'PR title and body are required in create mode',
+    )
   })
 
   it('returns failure when CI fails', async () => {

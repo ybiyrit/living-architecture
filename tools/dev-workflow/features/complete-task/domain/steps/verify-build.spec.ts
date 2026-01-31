@@ -12,6 +12,7 @@ function createContext(): CompleteTaskContext {
   return {
     branch: 'test-branch',
     reviewDir: './test-review',
+    prMode: 'create',
     hasIssue: false,
     prTitle: 'test title',
     prBody: 'test body',
@@ -23,7 +24,7 @@ describe('verifyBuild', () => {
     vi.clearAllMocks()
   })
 
-  it('runs lint, typecheck, and test targets', async () => {
+  it('runs lint and typecheck targets', async () => {
     mockRunMany.mockResolvedValue({
       failed: false,
       output: '',
@@ -32,7 +33,7 @@ describe('verifyBuild', () => {
 
     await verifyBuild.execute(ctx)
 
-    expect(mockRunMany).toHaveBeenCalledWith(['lint', 'typecheck', 'test'])
+    expect(mockRunMany).toHaveBeenCalledWith(['lint', 'typecheck'])
   })
 
   it('returns success when build passes', async () => {

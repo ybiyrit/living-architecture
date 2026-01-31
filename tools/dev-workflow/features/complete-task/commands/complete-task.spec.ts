@@ -9,6 +9,7 @@ const {
   mockMkdir,
   mockGit,
   mockGitHub,
+  mockGhCli,
   mockRunWorkflow,
   mockCli,
   mockClaude,
@@ -22,18 +23,18 @@ const {
     unpushedFiles: vi.fn(),
     uncommittedFiles: vi.fn(),
     push: vi.fn(),
-    headSha: vi.fn(),
   },
   mockGitHub: {
     getIssue: vi.fn(),
     findPRForBranch: vi.fn(),
     getPR: vi.fn(),
     createPR: vi.fn(),
-    watchCI: vi.fn(),
   },
+  mockGhCli: { watchCI: vi.fn() },
   mockRunWorkflow: vi.fn(),
   mockCli: {
     parseArg: vi.fn(),
+    requireArg: vi.fn(),
     hasFlag: vi.fn(),
   },
   mockClaude: {
@@ -47,6 +48,7 @@ const {
 vi.mock('node:fs/promises', () => ({ mkdir: mockMkdir }))
 vi.mock('../../../platform/infra/external-clients/git-client', () => ({ git: mockGit }))
 vi.mock('../../../platform/infra/external-clients/github-rest-client', () => ({github: mockGitHub,}))
+vi.mock('../../../platform/infra/external-clients/gh-cli', () => ({ ghCli: mockGhCli }))
 vi.mock('../../../platform/domain/workflow-execution/run-workflow', () => ({runWorkflow: mockRunWorkflow,}))
 vi.mock('../../../platform/infra/external-clients/cli-args', () => ({ cli: mockCli }))
 vi.mock('../../../platform/infra/external-clients/claude-agent', () => ({ claude: mockClaude }))
@@ -82,6 +84,7 @@ function buildTestContext(): CompleteTaskContext {
   return {
     branch: 'test-branch',
     reviewDir: 'reviews/test',
+    prMode: 'create',
     hasIssue: false,
     prTitle: 'test',
     prBody: 'test',
@@ -99,6 +102,11 @@ describe('executeCompleteTask', () => {
     })
     mockGitHub.findPRForBranch.mockResolvedValue(undefined)
     mockCli.parseArg.mockReturnValue(undefined)
+    mockCli.requireArg.mockImplementation((flag: string) => {
+      if (flag === '--prmode') return 'create'
+      return undefined
+    })
+    mockCli.hasFlag.mockReturnValue(false)
   })
 
   it('calls runWorkflow with steps and context builder', () => {
@@ -116,6 +124,35 @@ describe('executeCompleteTask', () => {
     const ctx = buildTestContext()
     const path = resolveTimingsFilePath(ctx)
     expect(path).toBe('reviews/test/timings.md')
+  })
+
+  it('rejects --reject-review-feedback in create mode', () => {
+    mockCli.hasFlag.mockImplementation((flag: string) => flag === '--reject-review-feedback')
+    mockCli.requireArg.mockImplementation((flag: string) => {
+      if (flag === '--prmode') return 'create'
+      return undefined
+    })
+
+    expect(() => executeCompleteTask()).toThrow(
+      '--reject-review-feedback can only be used with --prmode update',
+    )
+  })
+
+  it('allows --reject-review-feedback in update mode', () => {
+    mockCli.hasFlag.mockImplementation((flag: string) => flag === '--reject-review-feedback')
+    mockCli.requireArg.mockImplementation((flag: string) => {
+      if (flag === '--prmode') return 'update'
+      return undefined
+    })
+
+    executeCompleteTask()
+
+    expect(mockRunWorkflow).toHaveBeenCalledWith(
+      expect.any(Array),
+      expect.any(Function),
+      expect.any(Function),
+      expect.any(Object),
+    )
   })
 
   it('passes workflow steps in correct order', () => {
@@ -179,13 +216,74 @@ describe('executeCompleteTask', () => {
     expect(mockMkdir).toHaveBeenCalledWith('reviews/feature_with_slashes', expect.any(Object))
   })
 
-  it('context builder includes existing PR number', async () => {
+  it('context builder includes existing PR number in update mode', async () => {
     mockGitHub.findPRForBranch.mockResolvedValue(789)
+    mockCli.requireArg.mockImplementation((flag: string) => {
+      if (flag === '--prmode') return 'update'
+      if (flag === '--feedback-items-resolved') return '3'
+      if (flag === '--feedback-items-remaining') return '0'
+      return undefined
+    })
     executeCompleteTask()
 
     const context = await getContextBuilder()()
 
     expect(context.prNumber).toBe(789)
+  })
+
+  it('context builder rejects create mode when PR already exists', async () => {
+    mockGitHub.findPRForBranch.mockResolvedValue(789)
+    executeCompleteTask()
+
+    await expect(getContextBuilder()()).rejects.toThrow('PR #789 already exists')
+  })
+
+  it('context builder rejects update mode when no PR exists', async () => {
+    mockCli.requireArg.mockImplementation((flag: string) => {
+      if (flag === '--prmode') return 'update'
+      if (flag === '--feedback-items-resolved') return '3'
+      if (flag === '--feedback-items-remaining') return '0'
+      return undefined
+    })
+    executeCompleteTask()
+
+    await expect(getContextBuilder()()).rejects.toThrow('No PR exists')
+  })
+
+  it('context builder rejects update mode when feedback items remaining', async () => {
+    mockGitHub.findPRForBranch.mockResolvedValue(789)
+    mockCli.requireArg.mockImplementation((flag: string) => {
+      if (flag === '--prmode') return 'update'
+      if (flag === '--feedback-items-resolved') return '2'
+      if (flag === '--feedback-items-remaining') return '3'
+      return undefined
+    })
+    executeCompleteTask()
+
+    await expect(getContextBuilder()()).rejects.toThrow('3 feedback items remaining')
+  })
+
+  it('context builder rejects invalid prmode value', async () => {
+    mockCli.requireArg.mockImplementation((flag: string) => {
+      if (flag === '--prmode') return 'invalid'
+      return undefined
+    })
+    executeCompleteTask()
+
+    await expect(getContextBuilder()()).rejects.toThrow("--prmode must be 'create' or 'update'")
+  })
+
+  it('context builder rejects non-integer feedback-items-remaining', async () => {
+    mockGitHub.findPRForBranch.mockResolvedValue(789)
+    mockCli.requireArg.mockImplementation((flag: string) => {
+      if (flag === '--prmode') return 'update'
+      if (flag === '--feedback-items-resolved') return '2'
+      if (flag === '--feedback-items-remaining') return 'abc'
+      return undefined
+    })
+    executeCompleteTask()
+
+    await expect(getContextBuilder()()).rejects.toThrow('must be a non-negative integer')
   })
 
   it('result formatter is passed to runWorkflow', () => {
@@ -206,6 +304,7 @@ describe('executeCompleteTask', () => {
     const mockCtx: CompleteTaskContext = {
       branch: 'test-branch',
       reviewDir: 'reviews/test',
+      prMode: 'create',
       hasIssue: false,
       issueNumber: undefined,
       taskDetails: undefined,

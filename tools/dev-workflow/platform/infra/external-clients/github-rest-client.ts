@@ -56,11 +56,6 @@ interface CreatePROptions {
   base: string
 }
 
-interface CIResult {
-  failed: boolean
-  output: string
-}
-
 function determinePRState(mergedAt: string | null, state: string): PRState {
   if (mergedAt) {
     return 'merged'
@@ -290,7 +285,10 @@ export const github = {
     }
   },
 
-  async getMergeableState(prNumber: number): Promise<string | null> {
+  async getPRMergeInfo(prNumber: number): Promise<{
+    mergeableState: string
+    headSha: string
+  }> {
     const {
       owner, repo 
     } = await getRepoInfo()
@@ -301,92 +299,34 @@ export const github = {
       pull_number: prNumber,
     })
 
-    return response.data.mergeable_state
+    return {
+      mergeableState: response.data.mergeable_state,
+      headSha: response.data.head.sha,
+    }
   },
 
-  async watchCI(
-    prNumber: number,
-    expectedSha?: string,
-    timeoutMs = 10 * 60 * 1000,
-  ): Promise<CIResult> {
+  async listCheckRuns(ref: string): Promise<
+    Array<{
+      name: string
+      status: string
+      conclusion: string | null
+    }>
+  > {
     const {
       owner, repo 
     } = await getRepoInfo()
-    const startTime = Date.now()
-    const pollInterval = 30_000
 
-    while (Date.now() - startTime < timeoutMs) {
-      const { data: pr } = await getOctokit().pulls.get({
-        owner,
-        repo,
-        pull_number: prNumber,
-      })
+    const response = await getOctokit().checks.listForRef({
+      owner,
+      repo,
+      ref,
+    })
 
-      /* v8 ignore start - polling branch, difficult to test timing-dependent code */
-      if (expectedSha && pr.head.sha !== expectedSha) {
-        await new Promise((resolve) => setTimeout(resolve, pollInterval))
-        continue
-      }
-      /* v8 ignore stop */
-
-      const { data: checks } = await getOctokit().checks.listForRef({
-        owner,
-        repo,
-        ref: pr.head.sha,
-        per_page: 100,
-      })
-
-      if (checks.check_runs.length === 0) {
-        await new Promise((resolve) => setTimeout(resolve, pollInterval))
-        continue
-      }
-
-      const completedChecks = checks.check_runs.filter((run) => run.status === 'completed')
-      const failures = completedChecks.filter(
-        (run) => run.conclusion !== 'success' && run.conclusion !== 'skipped',
-      )
-
-      if (failures.length > 0) {
-        const output = failures
-          .map((f) => {
-            const header = `${f.name}: ${f.conclusion}`
-            const summary = f.output?.summary ?? ''
-            const details = f.output?.text ?? ''
-            const detailUrl = f.details_url ?? ''
-
-            const parts = [header]
-            if (summary) parts.push(`Summary: ${summary}`)
-            if (details) parts.push(`Details: ${details}`)
-            if (detailUrl) parts.push(`URL: ${detailUrl}`)
-
-            return parts.join('\n')
-          })
-          .join('\n\n')
-        return {
-          failed: true,
-          output,
-        }
-      }
-
-      const allComplete =
-        checks.check_runs.length > 0 && checks.check_runs.every((run) => run.status === 'completed')
-
-      if (allComplete) {
-        return {
-          failed: false,
-          output: 'All checks passed',
-        }
-      }
-
-      /* v8 ignore start - polling delay, timing-dependent */
-      await new Promise((resolve) => setTimeout(resolve, pollInterval))
-    }
-
-    return {
-      failed: true,
-      output: 'CI timed out waiting for checks to complete',
-    }
-    /* v8 ignore stop */
+    return response.data.check_runs.map((run) => ({
+      name: run.name,
+      status: run.status,
+      conclusion: run.conclusion ?? null,
+    }))
   },
 
   async listIssuesByMilestone(milestoneNumber: number): Promise<GitHubIssue[]> {

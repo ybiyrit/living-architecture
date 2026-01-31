@@ -268,9 +268,58 @@ describe('github PR operations', () => {
     expect((await github.getPRWithState(60)).state).toBe('open')
   })
 
-  it('getMergeableState returns mergeable state', async () => {
-    mockOctokitInstance.pulls.get.mockResolvedValue({ data: { mergeable_state: 'clean' } })
-    expect(await github.getMergeableState(70)).toBe('clean')
+  it('getPRMergeInfo returns mergeable state and head SHA', async () => {
+    mockOctokitInstance.pulls.get.mockResolvedValue({
+      data: {
+        mergeable_state: 'clean',
+        head: { sha: 'abc123' },
+      },
+    })
+    expect(await github.getPRMergeInfo(70)).toStrictEqual({
+      mergeableState: 'clean',
+      headSha: 'abc123',
+    })
+  })
+
+  it('listCheckRuns returns check run summaries', async () => {
+    mockOctokitInstance.checks.listForRef.mockResolvedValue({
+      data: {
+        check_runs: [
+          {
+            name: 'Build',
+            status: 'completed',
+            conclusion: 'success',
+          },
+          {
+            name: 'Knip',
+            status: 'completed',
+            conclusion: 'failure',
+          },
+          {
+            name: 'Pending',
+            status: 'in_progress',
+            conclusion: null,
+          },
+        ],
+      },
+    })
+    expect(await github.listCheckRuns('abc123')).toStrictEqual([
+      {
+        name: 'Build',
+        status: 'completed',
+        conclusion: 'success',
+      },
+      {
+        name: 'Knip',
+        status: 'completed',
+        conclusion: 'failure',
+      },
+      {
+        name: 'Pending',
+        status: 'in_progress',
+        conclusion: null,
+      },
+    ])
   })
 })
 
@@ -297,119 +346,5 @@ describe('github thread operations', () => {
       expect.stringContaining('resolveReviewThread'),
       { threadId: 'thread-id' },
     )
-  })
-})
-
-describe('github.watchCI', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
-    process.env.GITHUB_TOKEN = 'test-token'
-    mockRepo.getRemotes.mockResolvedValue([
-      {
-        name: 'origin',
-        refs: { fetch: 'https://github.com/owner/repo.git' },
-      },
-    ])
-    mockOctokitInstance.pulls.get.mockResolvedValue({ data: { head: { sha: 'abc123' } } })
-  })
-
-  afterEach(() => {
-    delete process.env.GITHUB_TOKEN
-  })
-
-  it.each([
-    [
-      'all checks pass',
-      [
-        {
-          name: 'test',
-          status: 'completed',
-          conclusion: 'success',
-        },
-      ],
-      false,
-      'All checks passed',
-    ],
-    [
-      'skipped checks as passing',
-      [
-        {
-          name: 'opt',
-          status: 'completed',
-          conclusion: 'skipped',
-        },
-      ],
-      false,
-      'All checks passed',
-    ],
-    [
-      'failure with minimal output',
-      [
-        {
-          name: 'lint',
-          status: 'completed',
-          conclusion: 'failure',
-        },
-      ],
-      true,
-      'lint: failure',
-    ],
-  ])('returns %s', async (_name, checkRuns, expectedFailed, expectedOutput) => {
-    mockOctokitInstance.checks.listForRef.mockResolvedValue({ data: { check_runs: checkRuns } })
-    const result = await github.watchCI(123)
-    expect(result.failed).toBe(expectedFailed)
-    expect(result.output).toContain(expectedOutput)
-  })
-
-  it('polls until check runs appear when initially empty', async () => {
-    vi.useFakeTimers()
-
-    try {
-      mockOctokitInstance.checks.listForRef
-        .mockResolvedValueOnce({ data: { check_runs: [] } })
-        .mockResolvedValueOnce({
-          data: {
-            check_runs: [
-              {
-                name: 'CI',
-                status: 'completed',
-                conclusion: 'success',
-              },
-            ],
-          },
-        })
-
-      const resultPromise = github.watchCI(123)
-      await vi.advanceTimersByTimeAsync(30_000)
-      const result = await resultPromise
-
-      expect(result.failed).toBe(false)
-      expect(result.output).toContain('All checks passed')
-      expect(mockOctokitInstance.checks.listForRef).toHaveBeenCalledTimes(2)
-    } finally {
-      vi.useRealTimers()
-    }
-  })
-
-  it('returns failure when checks fail with details', async () => {
-    mockOctokitInstance.checks.listForRef.mockResolvedValue({
-      data: {
-        check_runs: [
-          {
-            name: 'test',
-            status: 'completed',
-            conclusion: 'failure',
-            output: {
-              summary: 'Tests failed',
-              text: 'Details',
-            },
-            details_url: 'https://example.com/details',
-          },
-        ],
-      },
-    })
-    const result = await github.watchCI(123)
-    expect(result.failed).toBe(true)
-    expect(result.output).toContain('test: failure')
   })
 })
