@@ -81,7 +81,7 @@ Create `docs/continuous-improvement/post-merge-reflections/<YYYY-MM-DD>-<branch-
 Parse each piece of feedback into individual items. For every item, determine: accepted (code was changed) or rejected (no change, with reason).
 
 ```markdown
-# Pre-Merge Reflection: <branch-name>
+# Post-Merge Reflection: <branch-name>
 
 ## Summary
 [1-2 sentences on how the task went]
@@ -112,7 +112,24 @@ Analyze the timeline above for:
 - Unnecessary retries or rework
 - Steps that could have been parallelized
 
-[Describe any inefficiencies found and how to avoid them next time]
+[Describe any inefficiencies found]
+
+### Pipeline Improvement Proposals
+
+Based on the inefficiencies identified above, propose concrete changes to reduce lead time from initial commit to PR approved. Focus on:
+
+- **Root cause of rework:** What caused iterations? How can the process prevent this class of rework?
+- **Tooling/automation gaps:** Could a check, lint rule, or pre-flight step have caught the issue earlier?
+- **Process changes:** Should steps be reordered, combined, or run in parallel?
+- **Knowledge gaps:** Did the implementer lack context that could be documented?
+
+For each proposal, use this structure:
+
+#### Proposal: [Short title]
+- **Problem:** [What happened and how much time it cost]
+- **Root cause:** [Why the current process allowed it]
+- **Proposed change:** [Specific, actionable improvement]
+- **Expected impact:** [Estimated time saved per occurrence]
 
 ## All Feedback
 
@@ -179,7 +196,7 @@ Any feedback accepted from GitHub reviewers represents a process failure — it 
 ---
 
 ## Recommended Follow-Ups
-[Bulleted list of proposed actions derived from the 5 Whys analyses above]
+[Bulleted list of proposed actions derived from the 5 Whys analyses and Pipeline Improvement Proposals above]
 ```
 
 ### 4. Commit the Reflection File
@@ -208,10 +225,15 @@ Please review it, then we can discuss the recommended follow-ups.
 Based on user's feedback on the reflection:
 - Adjust any 5 Whys analyses the user disagrees with
 - Finalize which follow-ups to act on
-- For agreed follow-ups:
-  - Add new RFCs to `docs/conventions/review-feedback-checks.md` if applicable
-  - Create GitHub issues using `./scripts/create-non-milestone-task.sh --type tech` for process fixes
-- If changes were made, amend the commit or create a new commit
+- For agreed follow-ups that involve convention/process file changes (RFCs, anti-patterns, templates):
+  - Make the changes on this branch
+  - Update the reflection file's "Recommended Follow-Ups" to mark completed items with ✅
+  - Commit the changes (separate from the reflection commit)
+  - Push using: `pnpm nx run dev-workflow:push-reflection -- --follow-ups`
+- For larger follow-ups (new features, significant refactoring):
+  - Create GitHub issues using `./scripts/create-non-milestone-task.sh --type tech`
+
+**Note:** `--follow-ups` only works if the reflection file was already pushed in a prior commit. It cannot be used to bypass the reflection process.
 
 ### 7. Complete
 

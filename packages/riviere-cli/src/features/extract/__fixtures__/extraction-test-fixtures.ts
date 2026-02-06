@@ -2,29 +2,48 @@ import {
   writeFile, mkdir 
 } from 'node:fs/promises'
 import { join } from 'node:path'
+import { z } from 'zod'
 import { TestAssertionError } from '../../../platform/__fixtures__/command-test-fixtures'
 
-interface DraftComponent {
-  type: string
-  name: string
-  domain: string
-  location: {
-    file: string
-    line: number
-  }
-}
+const draftComponentSchema = z.looseObject({
+  type: z.string(),
+  name: z.string(),
+  domain: z.string(),
+  location: z.object({
+    file: z.string(),
+    line: z.number(),
+  }),
+})
 
-export interface ExtractionOutput {
-  success: true
-  data: DraftComponent[]
-}
+const extractedLinkOutputSchema = z.looseObject({
+  source: z.string(),
+  target: z.string(),
+  type: z.string().optional(),
+  sourceLocation: z
+    .object({
+      filePath: z.string(),
+      lineNumber: z.number(),
+    })
+    .optional(),
+  _uncertain: z.string().optional(),
+})
 
-function isExtractionOutput(value: unknown): value is ExtractionOutput {
-  if (typeof value !== 'object' || value === null) return false
-  if (!('success' in value) || value.success !== true) return false
-  if (!('data' in value) || !Array.isArray(value.data)) return false
-  return true
-}
+const extractionOutputSchema = z.object({
+  success: z.literal(true),
+  data: z.array(draftComponentSchema),
+})
+
+const fullExtractionOutputSchema = z.object({
+  success: z.literal(true),
+  data: z.object({
+    components: z.array(draftComponentSchema),
+    links: z.array(extractedLinkOutputSchema),
+  }),
+})
+
+export type ExtractionOutput = z.infer<typeof extractionOutputSchema>
+
+export type FullExtractionOutput = z.infer<typeof fullExtractionOutputSchema>
 
 export function parseExtractionOutput(consoleOutput: string[]): ExtractionOutput {
   const firstLine = consoleOutput[0]
@@ -32,10 +51,24 @@ export function parseExtractionOutput(consoleOutput: string[]): ExtractionOutput
     throw new TestAssertionError('Expected console output but got empty array')
   }
   const parsed: unknown = JSON.parse(firstLine)
-  if (!isExtractionOutput(parsed)) {
-    throw new TestAssertionError('Invalid extraction output')
+  const result = extractionOutputSchema.safeParse(parsed)
+  if (!result.success) {
+    throw new TestAssertionError(`Invalid extraction output: ${result.error.message}`)
   }
-  return parsed
+  return result.data
+}
+
+export function parseFullExtractionOutput(consoleOutput: string[]): FullExtractionOutput {
+  const firstLine = consoleOutput[0]
+  if (firstLine === undefined) {
+    throw new TestAssertionError('Expected console output but got empty array')
+  }
+  const parsed: unknown = JSON.parse(firstLine)
+  const result = fullExtractionOutputSchema.safeParse(parsed)
+  if (!result.success) {
+    throw new TestAssertionError(`Invalid full extraction output: ${result.error.message}`)
+  }
+  return result.data
 }
 
 const validConfigYaml = `

@@ -4,6 +4,8 @@ import {
   extractComponents,
   enrichComponents,
   matchesGlob,
+  detectConnections,
+  ConnectionDetectionError,
 } from '@living-architecture/riviere-extract-ts'
 import { formatSuccess } from '../../../platform/infra/cli-presentation/output'
 import {
@@ -21,21 +23,17 @@ import { outputResult } from '../../../platform/infra/cli-presentation/output-wr
 import {
   exitWithRuntimeError,
   exitWithExtractionFailure,
+  exitWithConnectionDetectionFailure,
 } from '../../../platform/infra/cli-presentation/exit-handlers'
-import { validateFlagCombinations } from '../../../platform/infra/cli-presentation/extract-validator'
-
-interface ExtractOptions {
-  config: string
-  dryRun?: boolean
-  output?: string
-  componentsOnly?: boolean
-  enrich?: string
-  allowIncomplete?: boolean
-  pr?: boolean
-  base?: string
-  files?: string[]
-  format?: string
-}
+import {
+  validateFlagCombinations,
+  type ExtractOptions,
+} from '../../../platform/infra/cli-presentation/extract-validator'
+import {
+  countLinksByType,
+  formatExtractionStats,
+  formatTimingLine,
+} from '../../../platform/infra/cli-presentation/format-extraction-stats'
 
 export function createExtractCommand(): Command {
   return new Command('extract')
@@ -50,6 +48,8 @@ export function createExtractCommand(): Command {
     .option('--base <branch>', 'Override base branch for --pr (default: auto-detect)')
     .option('--files <paths...>', 'Extract from specific files')
     .option('--format <type>', 'Output format: json (default) or markdown')
+    .option('--stats', 'Show extraction statistics on stderr')
+    .option('--patterns', 'Enable pattern-based connection detection')
     .action((options: ExtractOptions) => {
       validateFlagCombinations(options)
 
@@ -76,17 +76,14 @@ export function createExtractCommand(): Command {
         }
         /* v8 ignore stop */
       })()
-
       /* v8 ignore start -- @preserve: dry-run path tested via CLI integration */
       if (options.dryRun) {
-        const lines = formatDryRunOutput(draftComponents)
-        for (const line of lines) {
+        for (const line of formatDryRunOutput(draftComponents)) {
           console.log(line)
         }
         return
       }
       /* v8 ignore stop */
-
       if (options.format === 'markdown') {
         const markdown = formatPrMarkdown({
           added: draftComponents.map((c) => ({
@@ -113,17 +110,46 @@ export function createExtractCommand(): Command {
         matchesGlob,
         configDir,
       )
-
-      const hasFailures = enrichmentResult.failures.length > 0
-      if (hasFailures && options.allowIncomplete === true) {
-        outputResult(formatSuccess(enrichmentResult.components), options)
-        return
-      }
-
-      if (hasFailures) {
+      if (enrichmentResult.failures.length > 0 && options.allowIncomplete !== true) {
         exitWithExtractionFailure(enrichmentResult.failures.map((f) => f.field))
       }
 
-      outputResult(formatSuccess(enrichmentResult.components), options)
+      const {
+        links, timings 
+      } = (() => {
+        try {
+          return detectConnections(
+            project,
+            enrichmentResult.components,
+            {
+              allowIncomplete: options.allowIncomplete === true,
+              moduleGlobs: resolvedConfig.modules.map((m) => m.path),
+            },
+            matchesGlob,
+          )
+          /* v8 ignore start -- @preserve: ConnectionDetectionError tested via CLI integration in extract.connections.spec.ts */
+        } catch (error) {
+          if (error instanceof ConnectionDetectionError) {
+            exitWithConnectionDetectionFailure(error.file, error.line, error.typeName, error.reason)
+          }
+          throw error
+        }
+        /* v8 ignore stop */
+      })()
+      console.error(formatTimingLine(timings))
+      if (options.stats === true) {
+        const stats = countLinksByType(enrichmentResult.components.length, links)
+        for (const line of formatExtractionStats(stats)) {
+          console.error(line)
+        }
+      }
+      const outputOptions = options.output === undefined ? {} : { output: options.output }
+      outputResult(
+        formatSuccess({
+          components: enrichmentResult.components,
+          links,
+        }),
+        outputOptions,
+      )
     })
 }

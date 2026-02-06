@@ -1,7 +1,7 @@
 import { CliErrorCode } from './error-codes'
 import { exitWithConfigValidation } from './exit-handlers'
 
-interface ExtractOptions {
+export interface ExtractOptions {
   config: string
   dryRun?: boolean
   output?: string
@@ -12,6 +12,8 @@ interface ExtractOptions {
   base?: string
   files?: string[]
   format?: string
+  stats?: boolean
+  patterns?: boolean
 }
 
 function rejectMutuallyExclusive(
