@@ -1,0 +1,89 @@
+{
+  "include": ["src/features/extract/**/*.ts", "src/platform/infra/git/**/*.ts"],
+  "ignorePatterns": ["**/*.spec.ts", "**/__fixtures__/**"],
+  "layers": {
+    "entrypoint": {
+      "paths": ["src/features/entrypoint"],
+      "allowedRoles": ["cli-entrypoint"]
+    },
+    "commands": {
+      "paths": ["src/features/commands"],
+      "allowedRoles": ["command-use-case", "command-use-case-input", "command-use-case-result", "command-input-factory"]
+    },
+    "domain": {
+      "paths": ["src/features,platform/domain"],
+      "allowedRoles": ["aggregate", "value-object", "domain-service"]
+    },
+    "cli-output": {
+      "paths": ["src/features/infra/cli/output"],
+      "allowedRoles": ["cli-output-formatter"]
+    },
+    "external-clients": {
+      "paths": ["src/features,platform/infra/external-clients", "src/platform/infra/git"],
+      "allowedRoles": ["external-client-service", "external-client-model", "external-client-error"]
+    },
+    "persistence": {
+      "paths": ["src/features/infra/persistence"],
+      "allowedRoles": ["aggregate-repository"]
+    }
+  },
+  "roles": [
+    {
+      "name": "cli-entrypoint",
+      "targets": ["function"]
+    },
+    {
+      "name": "command-use-case",
+      "targets": ["function"],
+      "allowedInputs": ["command-use-case-input"],
+      "allowedOutputs": ["command-use-case-result"],
+      "forbiddenDependencies": ["command-use-case"]
+    },
+    {
+      "name": "command-use-case-input",
+      "targets": ["interface", "type-alias"],
+      "nameMatches": ".*Input$"
+    },
+    {
+      "name": "command-use-case-result",
+      "targets": ["interface", "type-alias"],
+      "nameMatches": ".*Result$"
+    },
+    {
+      "name": "cli-output-formatter",
+      "targets": ["function"]
+    },
+    {
+      "name": "command-input-factory",
+      "targets": ["function"]
+    },
+    {
+      "name": "external-client-service",
+      "targets": ["function"]
+    },
+    {
+      "name": "aggregate-repository",
+      "targets": ["class"]
+    },
+    {
+      "name": "aggregate",
+      "targets": ["interface", "type-alias", "class"]
+    },
+    {
+      "name": "value-object",
+      "targets": ["interface", "type-alias", "class"]
+    },
+    {
+      "name": "domain-service",
+      "targets": ["function"]
+    },
+    {
+      "name": "external-client-model",
+      "targets": ["interface", "type-alias", "class"]
+    },
+    {
+      "name": "external-client-error",
+      "targets": ["class"]
+    }
+  ]
+}

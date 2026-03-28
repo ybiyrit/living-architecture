@@ -1,7 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import {
-  GitError, extractStderr 
-} from './git-errors'
+import { GitError } from './git-errors'
 
 class RepositoryUrlParseError extends Error {
   /* v8 ignore start -- @preserve: Error constructor; tested via integration */
@@ -12,13 +10,14 @@ class RepositoryUrlParseError extends Error {
   /* v8 ignore stop */
 }
 
+/** @riviere-role external-client-model */
 export interface RepositoryInfo {
   name: string
   owner?: string
   url: string
 }
 
-export type GitExecutor = (binary: string, args: readonly string[], cwd: string) => string
+type GitExecutor = (binary: string, args: readonly string[], cwd: string) => string
 
 /* v8 ignore start -- @preserve: default executor delegates to execFileSync; tested via CLI integration */
 function defaultGitExecutor(binary: string, args: readonly string[], cwd: string): string {
@@ -30,7 +29,20 @@ function defaultGitExecutor(binary: string, args: readonly string[], cwd: string
 }
 /* v8 ignore stop */
 
-/* v8 ignore start -- @preserve: git execution; mocked in all integration tests */
+function extractStderr(error: Error): string {
+  if (!Object.hasOwn(error, 'stderr')) {
+    throw error
+  }
+
+  /* v8 ignore next -- @preserve: defensive optional chain; property existence guaranteed by hasOwn check above */
+  const stderrValue: unknown = Object.getOwnPropertyDescriptor(error, 'stderr')?.value
+  if (!stderrValue) {
+    throw error
+  }
+
+  return String(stderrValue)
+}
+
 function runGit(
   executor: GitExecutor,
   gitBinary: string,
@@ -53,7 +65,6 @@ function runGit(
     throw error
   }
 }
-/* v8 ignore stop */
 
 function parseRepositoryUrl(url: string): RepositoryInfo {
   // SSH format: git@github.com:owner/repo.git
@@ -97,7 +108,7 @@ function parseRepositoryUrl(url: string): RepositoryInfo {
   }
 }
 
-/* v8 ignore start -- @preserve: git execution; mocked in all integration tests */
+/** @riviere-role external-client-service */
 export function getRepositoryInfo(
   gitBinary = 'git',
   cwd = process.cwd(),
@@ -118,4 +129,3 @@ export function getRepositoryInfo(
     throw error
   }
 }
-/* v8 ignore stop */

@@ -1,289 +1,146 @@
 import {
-  describe, it, expect, vi, beforeEach 
+  beforeEach, describe, expect, it, vi 
 } from 'vitest'
+import { Project } from 'ts-morph'
 import type { Module } from '@living-architecture/riviere-extract-config'
-import type {
-  EnrichedComponent,
-  ExtractedLink,
-  PerModuleDetectionResult,
-  CrossModuleDetectionResult,
-} from '@living-architecture/riviere-extract-ts'
-import type { ModuleContext } from './extract-draft-components'
+import {
+  ExtractionProject, type ModuleContext 
+} from './extraction-project'
 
 const {
-  mockDetectPerModule,
-  mockDetectCrossModule,
-  mockDeduplicateCrossStrategy,
+  mockExtractComponents,
+  mockEnrichComponents,
   mockMatchesGlob,
+  mockDeduplicateCrossStrategy,
+  mockDetectCrossModule,
+  mockDetectPerModule,
 } = vi.hoisted(() => ({
-  mockDetectPerModule: vi.fn(),
-  mockDetectCrossModule: vi.fn(),
-  mockDeduplicateCrossStrategy: vi.fn((links: ExtractedLink[]) => links),
+  mockExtractComponents: vi.fn().mockReturnValue([]),
+  mockEnrichComponents: vi.fn().mockReturnValue({
+    components: [],
+    failures: [],
+  }),
   mockMatchesGlob: vi.fn(),
+  mockDeduplicateCrossStrategy: vi.fn((links: { source: string }[]) => links),
+  mockDetectPerModule: vi.fn().mockReturnValue({
+    links: [
+      {
+        source: 'orders:useCase:OrderService',
+        target: 'orders:repository:OrderRepo',
+        type: 'sync',
+      },
+    ],
+    timings: {
+      callGraphMs: 1,
+      configurableMs: 0,
+      setupMs: 0,
+    },
+  }),
+  mockDetectCrossModule: vi.fn().mockReturnValue({
+    links: [],
+    timings: { asyncDetectionMs: 0 },
+  }),
 }))
 
 vi.mock('@living-architecture/riviere-extract-ts', () => ({
+  extractComponents: mockExtractComponents,
+  enrichComponents: mockEnrichComponents,
+  matchesGlob: mockMatchesGlob,
   detectPerModuleConnections: mockDetectPerModule,
   detectCrossModuleConnections: mockDetectCrossModule,
   deduplicateCrossStrategy: mockDeduplicateCrossStrategy,
-  matchesGlob: mockMatchesGlob,
 }))
-
-import { detectConnectionsPerModule } from './detect-connections-per-module'
 
 function createModule(name: string): Module {
   return {
-    name,
-    path: name,
-    glob: 'src/**',
     api: { notUsed: true },
-    useCase: { notUsed: true },
     domainOp: { notUsed: true },
     event: { notUsed: true },
     eventHandler: { notUsed: true },
     eventPublisher: { notUsed: true },
+    glob: 'src/**',
+    name,
+    path: name,
     ui: { notUsed: true },
+    useCase: { notUsed: true },
   }
 }
 
 function createModuleContext(moduleName: string): ModuleContext {
   return {
+    files: [`/src/${moduleName}/test.ts`],
     module: createModule(moduleName),
-    files: [],
-    project: Object.create(null),
+    project: new Project(),
   }
 }
 
-function createComponent(
-  name: string,
-  domain: string,
-  type: string,
-  metadata: Record<string, unknown> = {},
-): EnrichedComponent {
-  return {
-    name,
-    domain,
-    type,
-    location: {
-      file: `/src/${domain}/${name}.ts`,
-      line: 1,
-    },
-    metadata,
-  }
-}
-
-function createLink(source: string, target: string, type: 'sync' | 'async'): ExtractedLink {
-  return {
-    source,
-    target,
-    type,
-  }
-}
-
-describe('detectConnectionsPerModule', () => {
+describe('ExtractionProject.extractDraftComponents', () => {
   beforeEach(() => {
     vi.clearAllMocks()
   })
 
-  it('runs per-module detection for each module with its own components', () => {
-    const ordersCtx = createModuleContext('orders')
-    const shippingCtx = createModuleContext('shipping')
-    const orderComp = createComponent('PlaceOrder', 'orders', 'useCase')
-    const shippingComp = createComponent('ShipOrder', 'shipping', 'useCase')
+  it('returns links when includeConnections is true', () => {
+    const ctx = createModuleContext('orders')
 
-    const perModuleResult: PerModuleDetectionResult = {
-      links: [],
-      timings: {
-        callGraphMs: 1,
-        configurableMs: 0,
-        setupMs: 0,
+    mockExtractComponents.mockReturnValue([
+      {
+        name: 'OrderService',
+        domain: 'orders',
+        type: 'useCase',
+        location: {
+          file: 'test.ts',
+          line: 1,
+        },
       },
-    }
-    mockDetectPerModule.mockReturnValue(perModuleResult)
-    const crossResult: CrossModuleDetectionResult = {
-      links: [],
-      timings: { asyncDetectionMs: 0 },
-    }
-    mockDetectCrossModule.mockReturnValue(crossResult)
-
-    detectConnectionsPerModule(
-      [ordersCtx, shippingCtx],
-      [orderComp, shippingComp],
-      'test-repo',
-      false,
-    )
-
-    expect(mockDetectPerModule).toHaveBeenCalledTimes(2)
-    expect(mockDetectPerModule).toHaveBeenNthCalledWith(
-      1,
-      ordersCtx.project,
-      [orderComp],
-      expect.any(Object),
-      mockMatchesGlob,
-    )
-    expect(mockDetectPerModule).toHaveBeenNthCalledWith(
-      2,
-      shippingCtx.project,
-      [shippingComp],
-      expect.any(Object),
-      mockMatchesGlob,
-    )
-  })
-
-  it('passes all components to cross-module detection', () => {
-    const ordersCtx = createModuleContext('orders')
-    const orderComp = createComponent('PlaceOrder', 'orders', 'useCase')
-    const shippingComp = createComponent('ShipEvent', 'shipping', 'event', {eventName: 'ShipEvent',})
-
+    ])
+    mockEnrichComponents.mockReturnValue({
+      components: [
+        {
+          name: 'OrderService',
+          domain: 'orders',
+          type: 'useCase',
+          location: {
+            file: 'test.ts',
+            line: 1,
+          },
+          metadata: {},
+        },
+      ],
+      failures: [],
+    })
     mockDetectPerModule.mockReturnValue({
-      links: [],
-      timings: {
-        callGraphMs: 0,
-        configurableMs: 0,
-        setupMs: 0,
-      },
-    })
-    mockDetectCrossModule.mockReturnValue({
-      links: [],
-      timings: { asyncDetectionMs: 0 },
-    })
-
-    detectConnectionsPerModule([ordersCtx], [orderComp, shippingComp], 'test-repo', false)
-
-    expect(mockDetectCrossModule).toHaveBeenCalledWith([orderComp, shippingComp], {
-      allowIncomplete: false,
-      repository: 'test-repo',
-    })
-  })
-
-  it('combines links from per-module and cross-module phases', () => {
-    const ordersCtx = createModuleContext('orders')
-    const orderComp = createComponent('PlaceOrder', 'orders', 'useCase')
-
-    const syncLink = createLink('orders:useCase:PlaceOrder', 'orders:repository:OrderRepo', 'sync')
-    const asyncLink = createLink(
-      'shipping:event:ShipmentDispatched',
-      'orders:eventHandler:handle',
-      'async',
-    )
-
-    mockDetectPerModule.mockReturnValue({
-      links: [syncLink],
+      links: [
+        {
+          source: 'orders:useCase:OrderService',
+          target: 'orders:repository:OrderRepo',
+          type: 'sync' as const,
+        },
+      ],
       timings: {
         callGraphMs: 1,
         configurableMs: 0,
         setupMs: 0,
       },
     })
-    mockDetectCrossModule.mockReturnValue({
-      links: [asyncLink],
-      timings: { asyncDetectionMs: 2 },
+
+    const project = new ExtractionProject('/config', [ctx], { modules: [] }, 'test-repo')
+    const result = project.extractDraftComponents({
+      allowIncomplete: true,
+      includeConnections: true,
     })
 
-    detectConnectionsPerModule([ordersCtx], [orderComp], 'test-repo', false)
-
-    expect(mockDeduplicateCrossStrategy).toHaveBeenCalledWith([syncLink, asyncLink])
+    expect(result.kind).toBe('full')
   })
 
-  it('skips per-module detection for modules with no components', () => {
-    const emptyCtx = createModuleContext('empty')
-    const ordersCtx = createModuleContext('orders')
-    const orderComp = createComponent('PlaceOrder', 'orders', 'useCase')
-
-    mockDetectPerModule.mockReturnValue({
-      links: [],
-      timings: {
-        callGraphMs: 0,
-        configurableMs: 0,
-        setupMs: 0,
-      },
-    })
-    mockDetectCrossModule.mockReturnValue({
-      links: [],
-      timings: { asyncDetectionMs: 0 },
-    })
-
-    detectConnectionsPerModule([emptyCtx, ordersCtx], [orderComp], 'test-repo', false)
-
-    expect(mockDetectPerModule).toHaveBeenCalledTimes(1)
-  })
-
-  it('returns empty result for empty module contexts', () => {
-    mockDetectCrossModule.mockReturnValue({
-      links: [],
-      timings: { asyncDetectionMs: 0 },
-    })
-
-    const result = detectConnectionsPerModule([], [], 'test-repo', false)
-
-    expect(result.links).toStrictEqual([])
-    expect(mockDetectPerModule).not.toHaveBeenCalled()
-  })
-
-  it('propagates allowIncomplete flag to both phases', () => {
+  it('returns no links when includeConnections is false', () => {
     const ctx = createModuleContext('orders')
-    const comp = createComponent('PlaceOrder', 'orders', 'useCase')
 
-    mockDetectPerModule.mockReturnValue({
-      links: [],
-      timings: {
-        callGraphMs: 0,
-        configurableMs: 0,
-        setupMs: 0,
-      },
-    })
-    mockDetectCrossModule.mockReturnValue({
-      links: [],
-      timings: { asyncDetectionMs: 0 },
+    const project = new ExtractionProject('/config', [ctx], { modules: [] }, 'test-repo')
+    const result = project.extractDraftComponents({
+      allowIncomplete: true,
+      includeConnections: false,
     })
 
-    detectConnectionsPerModule([ctx], [comp], 'test-repo', true)
-
-    expect(mockDetectPerModule).toHaveBeenCalledWith(
-      ctx.project,
-      [comp],
-      expect.objectContaining({ allowIncomplete: true }),
-      mockMatchesGlob,
-    )
-    expect(mockDetectCrossModule).toHaveBeenCalledWith(
-      [comp],
-      expect.objectContaining({ allowIncomplete: true }),
-    )
-  })
-
-  it('aggregates timings from per-module and cross-module phases', () => {
-    const ctx = createModuleContext('orders')
-    const comp = createComponent('PlaceOrder', 'orders', 'useCase')
-
-    mockDetectPerModule.mockReturnValue({
-      links: [],
-      timings: {
-        callGraphMs: 10,
-        configurableMs: 5,
-        setupMs: 2,
-      },
-    })
-    mockDetectCrossModule.mockReturnValue({
-      links: [],
-      timings: { asyncDetectionMs: 3 },
-    })
-
-    const result = detectConnectionsPerModule([ctx], [comp], 'test-repo', false)
-
-    expect(result.timings).toHaveLength(2)
-    expect(result.timings[0]).toStrictEqual({
-      callGraphMs: 10,
-      asyncDetectionMs: 0,
-      configurableMs: 5,
-      setupMs: 2,
-      totalMs: 17,
-    })
-    expect(result.timings[1]).toStrictEqual({
-      callGraphMs: 0,
-      asyncDetectionMs: 3,
-      configurableMs: 0,
-      setupMs: 0,
-      totalMs: 3,
-    })
+    expect(result.kind).toBe('draftOnly')
   })
 })

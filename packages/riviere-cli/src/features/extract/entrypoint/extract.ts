@@ -1,16 +1,19 @@
 import { Command } from 'commander'
 import {
-  loadAndValidateConfig,
-  resolveSourceFiles,
-} from '../../../platform/infra/extraction-config/config-loader'
-import { resolveFilteredSourceFiles } from '../../../platform/infra/source-filtering/filter-source-files'
+  CliErrorCode, ExitCode 
+} from '../../../platform/infra/cli-presentation/error-codes'
+import { exitWithCliError } from '../../../platform/infra/cli-presentation/exit-with-cli-error'
 import {
   validateFlagCombinations,
   type ExtractOptions,
 } from '../../../platform/infra/cli-presentation/extract-validator'
-import { runExtraction } from '../commands/run-extraction'
-import { presentExtractionResult } from '../infra/mappers/present-extraction-result'
+import { enrichDraftComponents } from '../commands/enrich-draft-components'
+import { extractDraftComponents } from '../commands/extract-draft-components'
+import { createExtractDraftComponentsInput } from '../commands/create-extract-draft-components-input'
+import { createEnrichDraftComponentsInput } from '../commands/create-enrich-draft-components-input'
+import { presentExtractionResult } from '../infra/cli/output/present-extraction-result'
 
+/** @riviere-role cli-entrypoint */
 export function createExtractCommand(): Command {
   return new Command('extract')
     .description('Extract architectural components from source code')
@@ -30,13 +33,19 @@ export function createExtractCommand(): Command {
     .action((options: ExtractOptions) => {
       validateFlagCombinations(options)
 
-      const {
-        resolvedConfig, configDir 
-      } = loadAndValidateConfig(options.config)
-      const allSourceFilePaths = resolveSourceFiles(resolvedConfig, configDir)
-      const sourceFilePaths = resolveFilteredSourceFiles(allSourceFilePaths, options)
+      const result =
+        options.enrich === undefined
+          ? extractDraftComponents(createExtractDraftComponentsInput(options))
+          : enrichDraftComponents(createEnrichDraftComponentsInput(options, options.enrich))
 
-      const result = runExtraction(options, resolvedConfig, configDir, sourceFilePaths)
+      if (result.kind === 'fieldFailure') {
+        exitWithCliError(
+          CliErrorCode.ValidationError,
+          `Extraction failed for fields: ${result.failedFields.join(', ')}`,
+          ExitCode.ExtractionFailure,
+        )
+      }
+
       presentExtractionResult(result, options)
     })
 }
