@@ -1,29 +1,17 @@
 import { Command } from 'commander'
-import { writeFile } from 'node:fs/promises'
 import { ComponentId } from '@living-architecture/riviere-builder'
+import { getDefaultGraphPathDescription } from '../../../platform/infra/cli/presentation/graph-path-option'
 import {
-  getDefaultGraphPathDescription,
-  resolveGraphPath,
-} from '../../../platform/infra/graph-persistence/graph-path'
-import { fileExists } from '../../../platform/infra/graph-persistence/file-existence'
-import { formatSuccess } from '../../../platform/infra/cli-presentation/output'
+  formatError, formatSuccess 
+} from '../../../platform/infra/cli/presentation/output'
 import {
   isValidLinkType,
   normalizeComponentType,
-} from '../../../platform/infra/cli-presentation/component-types'
-import { isValidHttpMethod } from '../../../platform/infra/cli-presentation/validation'
-import {
-  loadGraphBuilder,
-  reportGraphNotFound,
-} from '../../../platform/infra/graph-persistence/builder-graph-loader'
-import {
-  findApisByPath, getAllApiPaths 
-} from '../queries/api-component-queries'
-import {
-  reportNoApiFoundForPath,
-  reportAmbiguousApiMatch,
-} from '../../../platform/infra/cli-presentation/link-http-errors'
-import { validateOptions } from '../../../platform/infra/cli-presentation/link-http-validator'
+} from '../../../platform/infra/cli/input/component-types'
+import { isValidHttpMethod } from '../../../platform/infra/cli/input/validation'
+import { validateOptions } from '../../../platform/infra/cli/input/link-http-validator'
+import { CliErrorCode } from '../../../platform/infra/cli/presentation/error-codes'
+import type { LinkHttp } from '../commands/link-http'
 
 interface LinkHttpOptions {
   path: string
@@ -37,7 +25,8 @@ interface LinkHttpOptions {
   json?: boolean
 }
 
-export function createLinkHttpCommand(): Command {
+/** @riviere-role cli-entrypoint */
+export function createLinkHttpCommand(linkHttp: LinkHttp): Command {
   return new Command('link-http')
     .description('Find an API by HTTP path and link to a target component')
     .addHelpText(
@@ -70,71 +59,44 @@ Examples:
         return
       }
 
-      const graphPath = resolveGraphPath(options.graph)
-      const graphExists = await fileExists(graphPath)
-
-      if (!graphExists) {
-        reportGraphNotFound(graphPath)
-        return
-      }
-
-      const builder = await loadGraphBuilder(graphPath)
-      const graph = builder.build()
-
       const normalizedMethod = options.method?.toUpperCase()
       const httpMethod =
-        normalizedMethod && isValidHttpMethod(normalizedMethod) ? normalizedMethod : undefined
-      const matchingApis = findApisByPath(graph, options.path, httpMethod)
+        normalizedMethod !== undefined && isValidHttpMethod(normalizedMethod)
+          ? normalizedMethod
+          : undefined
+      const linkType =
+        options.linkType !== undefined && isValidLinkType(options.linkType)
+          ? options.linkType
+          : undefined
 
-      const [matchedApi, ...otherApis] = matchingApis
+      const result = linkHttp.execute({
+        graphPathOption: options.graph,
+        httpMethod,
+        linkType,
+        path: options.path,
+        targetId: ComponentId.create({
+          domain: options.toDomain,
+          module: options.toModule,
+          type: normalizeComponentType(options.toType),
+          name: options.toName,
+        }).toString(),
+      })
+      if (!result.success) {
+        const errorCodeByResult = {
+          AMBIGUOUS_API_MATCH: CliErrorCode.AmbiguousApiMatch,
+          COMPONENT_NOT_FOUND: CliErrorCode.ComponentNotFound,
+          GRAPH_CORRUPTED: CliErrorCode.GraphCorrupted,
+          GRAPH_NOT_FOUND: CliErrorCode.GraphNotFound,
+          VALIDATION_ERROR: CliErrorCode.ValidationError,
+        } as const
+        const errorCode = errorCodeByResult[result.code]
 
-      if (!matchedApi) {
-        reportNoApiFoundForPath(options.path, getAllApiPaths(graph))
+        console.log(JSON.stringify(formatError(errorCode, result.message, result.suggestions)))
         return
       }
-
-      if (otherApis.length > 0) {
-        reportAmbiguousApiMatch(options.path, matchingApis)
-        return
-      }
-
-      const targetId = ComponentId.create({
-        domain: options.toDomain,
-        module: options.toModule,
-        type: normalizeComponentType(options.toType),
-        name: options.toName,
-      }).toString()
-
-      const linkInput: {
-        from: string
-        to: string
-        type?: 'sync' | 'async'
-      } = {
-        from: matchedApi.id,
-        to: targetId,
-      }
-
-      if (options.linkType !== undefined && isValidLinkType(options.linkType)) {
-        linkInput.type = options.linkType
-      }
-
-      const link = builder.link(linkInput)
-
-      await writeFile(graphPath, builder.serialize(), 'utf-8')
 
       if (options.json) {
-        console.log(
-          JSON.stringify(
-            formatSuccess({
-              link,
-              matchedApi: {
-                id: matchedApi.id,
-                path: matchedApi.path,
-                method: matchedApi.httpMethod,
-              },
-            }),
-          ),
-        )
+        console.log(JSON.stringify(formatSuccess(result)))
       }
     })
 }

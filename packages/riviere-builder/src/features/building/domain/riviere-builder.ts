@@ -14,17 +14,20 @@ import {
 } from './construction/construction-errors'
 import { toRiviereGraph } from './inspection/inspection-functions'
 
+/** @riviere-role domain-service */
 export class RiviereBuilder {
   readonly construction: GraphConstruction
   readonly enrichment: GraphEnrichment
   readonly linking: GraphLinking
   readonly inspection: GraphInspection
   readonly errorRecovery: NearMatch
+  readonly graphPath: string
 
   private readonly graph: BuilderGraph
 
-  private constructor(graph: BuilderGraph) {
+  private constructor(graph: BuilderGraph, graphPath: string) {
     this.graph = graph
+    this.graphPath = graphPath
     this.construction = new GraphConstruction(graph)
     this.enrichment = new GraphEnrichment(graph)
     this.linking = new GraphLinking(graph)
@@ -32,7 +35,7 @@ export class RiviereBuilder {
     this.errorRecovery = new NearMatch(graph)
   }
 
-  static resume(graph: RiviereGraph): RiviereBuilder {
+  static resume(graph: RiviereGraph, graphPath = ''): RiviereBuilder {
     if (!graph.metadata.sources || graph.metadata.sources.length === 0) {
       throw new InvalidGraphError('missing sources')
     }
@@ -48,10 +51,10 @@ export class RiviereBuilder {
       links: graph.links,
       externalLinks: graph.externalLinks ?? [],
     }
-    return new RiviereBuilder(builderGraph)
+    return new RiviereBuilder(builderGraph, graphPath)
   }
 
-  static new(options: BuilderOptions): RiviereBuilder {
+  static new(options: BuilderOptions, graphPath = ''): RiviereBuilder {
     if (options.sources.length === 0) {
       throw new MissingSourcesError()
     }
@@ -74,7 +77,7 @@ export class RiviereBuilder {
       externalLinks: [],
     }
 
-    return new RiviereBuilder(graph)
+    return new RiviereBuilder(graph, graphPath)
   }
 
   serialize(): string {

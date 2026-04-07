@@ -44,9 +44,52 @@ export default {
           TSTypeAliasDeclaration(node) {
             validateDeclaration(node, 'type-alias')
           },
+          ImportDeclaration(node) {
+            validateForbiddenImports(node)
+          },
           'Program:exit'() {
             validateForbiddenDependencies()
+            validateForbiddenMethodCalls()
           },
+        }
+
+        function validateForbiddenImports(node) {
+          const importSource = node.source.value
+          if (typeof importSource !== 'string') {
+            return
+          }
+
+          const resolvedImport = resolveTypeFile(filename, importSource)
+          if (resolvedImport === null) {
+            return
+          }
+
+          const resolvedImportRelative = normalizePath(
+            readRelativeFilePath(resolvedImport, options.configDir),
+          )
+
+          const fileDir = normalizePath(path.dirname(relativeFilePath))
+          for (const [, layer] of layerEntries) {
+            if (!layer.paths.some((pattern) => matchesExpandedPattern(fileDir, pattern))) {
+              continue
+            }
+
+            if (!Array.isArray(layer.forbiddenImports)) {
+              continue
+            }
+
+            for (const forbiddenPattern of layer.forbiddenImports) {
+              if (
+                minimatch(resolvedImportRelative, forbiddenPattern, { dot: true }) ||
+                minimatch(resolvedImportRelative, `${forbiddenPattern}/**`, { dot: true })
+              ) {
+                report(
+                  node,
+                  `Forbidden import: files in this location cannot import from '${forbiddenPattern}'. See ${options.configDisplayPath}`,
+                )
+              }
+            }
+          }
         }
 
         function validateDeclaration(node, target) {
@@ -111,10 +154,20 @@ export default {
             return
           }
 
+          const approvedResult = matchesApprovedInstances(name, role)
+          if (approvedResult.checked && !approvedResult.passed) {
+            report(node, approvedResult.reason)
+            return
+          }
+
           fileRoles.push(roleName)
 
           if (target === 'function') {
             validateFunctionContract(node, role, name)
+          }
+
+          if (target === 'class') {
+            validateClassContract(node, role, name)
           }
         }
 
@@ -135,6 +188,92 @@ export default {
 
           for (const statement of readRelativeImportStatements()) {
             reportForbiddenImports(statement, forbiddenSet)
+          }
+        }
+
+        function validateForbiddenMethodCalls() {
+          const forbiddenMethodCallRoles = collectForbiddenMethodCallRoles(fileRoles, roleMap)
+          if (forbiddenMethodCallRoles.size === 0) {
+            return
+          }
+
+          const restrictedBindings = new Map()
+          for (const statement of readRelativeImportStatements()) {
+            const resolvedFile = resolveTypeFile(filename, statement.source.value)
+            if (resolvedFile === null) {
+              continue
+            }
+            const importedRoles = readAllExportedRoles(resolvedFile)
+            const matchedRole = importedRoles.find((r) => forbiddenMethodCallRoles.has(r))
+            if (matchedRole === undefined) {
+              continue
+            }
+            for (const specifier of statement.specifiers ?? []) {
+              if (specifier.type === 'ImportSpecifier' || specifier.type === 'ImportDefaultSpecifier') {
+                restrictedBindings.set(specifier.local.name, matchedRole)
+              }
+            }
+          }
+
+          if (restrictedBindings.size === 0) {
+            return
+          }
+
+          const nonImportBody = sourceCode.ast.body.filter(
+            (n) => n.type !== 'ImportDeclaration',
+          )
+          for (const node of nonImportBody) {
+            walkForNonConstructionUsages(node, restrictedBindings, false)
+          }
+        }
+
+        function walkForNonConstructionUsages(node, restrictedBindings, insideNew) {
+          if (node === null || node === undefined || typeof node !== 'object') {
+            return
+          }
+
+          if (node.type === 'NewExpression') {
+            walkForNonConstructionUsages(node.callee, restrictedBindings, true)
+            walkChildren(node.arguments ?? [], restrictedBindings)
+            return
+          }
+
+          if (isRestrictedNonConstructionUsage(node, restrictedBindings, insideNew)) {
+            return
+          }
+
+          walkNodeChildren(node, restrictedBindings)
+        }
+
+        function isRestrictedNonConstructionUsage(node, restrictedBindings, insideNew) {
+          if (node.type !== 'Identifier' || insideNew || !restrictedBindings.has(node.name)) {
+            return false
+          }
+          const roleName = restrictedBindings.get(node.name)
+          report(
+            node,
+            `Role '${fileRoles.join(', ')}' forbids non-construction usage of '${roleName}' imports. Only 'new' is allowed. See ${options.configDisplayPath}`,
+          )
+          return true
+        }
+
+        function walkNodeChildren(node, restrictedBindings) {
+          for (const key of Object.keys(node)) {
+            if (key === 'parent') {
+              continue
+            }
+            const child = node[key]
+            if (Array.isArray(child)) {
+              walkChildren(child, restrictedBindings)
+            } else if (child !== null && typeof child === 'object' && child.type !== undefined) {
+              walkForNonConstructionUsages(child, restrictedBindings, false)
+            }
+          }
+        }
+
+        function walkChildren(children, restrictedBindings) {
+          for (const item of children) {
+            walkForNonConstructionUsages(item, restrictedBindings, false)
           }
         }
 
@@ -214,14 +353,112 @@ export default {
           }
 
           if (Array.isArray(role.allowedOutputs)) {
-            const outputRole = readTypeRole(node.returnType, filename)
-            if (outputRole === null || !role.allowedOutputs.includes(outputRole)) {
+            const outputRoles = readOutputTypeRoles(node.returnType, filename)
+            if (outputRoles === null || !outputRoles.every((r) => role.allowedOutputs.includes(r))) {
               report(
                 node,
                 `Role '${role.name}' only allows outputs [${role.allowedOutputs.join(', ')}] on '${name}'. See ${options.configDisplayPath}`,
               )
             }
           }
+        }
+
+        function validateClassContract(node, role, name) {
+          if (typeof role.minPublicMethods === 'number') {
+            const publicMethodCount = countPublicMethods(node)
+            if (publicMethodCount < role.minPublicMethods) {
+              report(
+                node,
+                `Role '${role.name}' requires at least ${role.minPublicMethods} public method(s) on '${name}'. See ${options.configDisplayPath}`,
+              )
+            }
+          }
+
+          if (typeof role.maxPublicMethods === 'number') {
+            const maxCount = countPublicMethods(node)
+            if (maxCount > role.maxPublicMethods) {
+              report(
+                node,
+                `Role '${role.name}' allows at most ${role.maxPublicMethods} public method(s) on '${name}'. See ${options.configDisplayPath}`,
+              )
+            }
+          }
+
+          if (Array.isArray(role.allowedOutputs)) {
+            for (const member of node.body.body) {
+              if (
+                member.type === 'MethodDefinition' &&
+                member.kind !== 'constructor' &&
+                (member.accessibility === 'public' || member.accessibility == null)
+              ) {
+                const methodName = member.key?.name ?? '?'
+                validateFunctionContract(member.value, role, `${name}.${methodName}`)
+              }
+            }
+          }
+        }
+
+        function countPublicMethods(classNode) {
+          return classNode.body.body.filter(
+            (member) =>
+              member.type === 'MethodDefinition' &&
+              member.kind !== 'constructor' &&
+              (member.accessibility === 'public' || member.accessibility == null),
+          ).length
+        }
+
+        function readOutputTypeRoles(typeAnnotation, currentFile) {
+          if (typeAnnotation === null || typeAnnotation === undefined) {
+            return null
+          }
+          if (typeAnnotation.type !== 'TSTypeAnnotation') {
+            return null
+          }
+          return resolveTypeNodeRoles(typeAnnotation.typeAnnotation, currentFile)
+        }
+
+        function resolveTypeNodeRoles(typeNode, currentFile) {
+          if (typeNode.type === 'TSUnionType') {
+            const memberRoleSets = typeNode.types.map((member) =>
+              resolveTypeNodeRoles(member, currentFile),
+            )
+            if (memberRoleSets.some((roles) => roles === null)) {
+              return null
+            }
+            return memberRoleSets.flat()
+          }
+
+          if (typeNode.type === 'TSArrayType') {
+            return resolveTypeNodeRoles(typeNode.elementType, currentFile)
+          }
+
+          if (
+            typeNode.type === 'TSTypeReference' &&
+            typeNode.typeName?.type === 'Identifier' &&
+            typeNode.typeName.name === 'Promise'
+          ) {
+            const typeArgs = typeNode.typeArguments?.params ?? typeNode.typeParameters?.params
+            if (!Array.isArray(typeArgs) || typeArgs.length !== 1) {
+              return null
+            }
+            return resolveTypeNodeRoles(typeArgs[0], currentFile)
+          }
+
+          if (typeNode.type === 'TSVoidKeyword') {
+            return []
+          }
+
+          if (typeNode.type === 'TSTypeReference' && typeNode.typeName?.type === 'Identifier') {
+            const localTypeName = typeNode.typeName.name
+            const importedReference = readImportedReference(localTypeName, currentFile)
+            const resolvedRole =
+              importedReference !== null
+                ? readExportedRole(importedReference.filePath, importedReference.exportedName)
+                : readExportedRole(currentFile, localTypeName)
+            return resolvedRole !== null ? [resolvedRole] : null
+          }
+
+          return null
         }
 
         function readTypeRole(typeAnnotation, currentFile) {
@@ -233,8 +470,8 @@ export default {
             return null
           }
 
-          const innerType = typeAnnotation.typeAnnotation
-          if (innerType.type !== 'TSTypeReference' || innerType.typeName.type !== 'Identifier') {
+          const innerType = unwrapSupportedTypeReference(typeAnnotation.typeAnnotation)
+          if (innerType === null) {
             return null
           }
 
@@ -245,6 +482,24 @@ export default {
           }
 
           return readExportedRole(currentFile, localTypeName)
+        }
+
+        function unwrapSupportedTypeReference(typeNode) {
+          if (typeNode.type !== 'TSTypeReference' || typeNode.typeName.type !== 'Identifier') {
+            return null
+          }
+
+          if (typeNode.typeName.name !== 'Promise') {
+            return typeNode
+          }
+
+          const promiseTypeArguments =
+            typeNode.typeArguments?.params ?? typeNode.typeParameters?.params
+          if (!Array.isArray(promiseTypeArguments) || promiseTypeArguments.length !== 1) {
+            return null
+          }
+
+          return unwrapSupportedTypeReference(promiseTypeArguments[0])
         }
 
         function readImportedReference(localTypeName, currentFile) {
@@ -259,19 +514,66 @@ export default {
               localTypeName,
               currentFile,
             )
-            if (importedReference === undefined) {
-              continue
+            if (importedReference !== undefined) {
+              importCache.set(cacheKey, importedReference)
+              return importedReference
             }
-
-            importCache.set(cacheKey, importedReference)
-            return importedReference
           }
 
-          importCache.set(cacheKey, null)
+          const workspaceRef = readWorkspacePackageReference(localTypeName)
+          importCache.set(cacheKey, workspaceRef)
+          return workspaceRef
+        }
+
+        function readWorkspacePackageReference(localTypeName) {
+          const workspacePackageSources = options.workspacePackageSources ?? {}
+          for (const statement of sourceCode.ast.body) {
+            const ref = readWorkspaceImportStatement(statement, localTypeName, workspacePackageSources)
+            if (ref !== null) {
+              return ref
+            }
+          }
           return null
         }
 
-        function readExportedRole(filePath, exportedName) {
+        function readWorkspaceImportStatement(statement, localTypeName, workspacePackageSources) {
+          if (statement.type !== 'ImportDeclaration') {
+            return null
+          }
+          const importSource = statement.source.value
+          if (typeof importSource !== 'string' || importSource.startsWith('.')) {
+            return null
+          }
+          const specifier = (statement.specifiers ?? []).find(
+            (s) => s.type === 'ImportSpecifier' && s.local.name === localTypeName,
+          )
+          if (specifier === undefined) {
+            return null
+          }
+          const sourceEntry = workspacePackageSources[importSource]
+          if (sourceEntry === undefined) {
+            return null
+          }
+          const resolvedSourcePath = resolveTypeFile(path.join(options.configDir, '_'), sourceEntry)
+          if (resolvedSourcePath === null) {
+            return null
+          }
+          const importedName =
+            specifier.imported.type === 'Identifier'
+              ? specifier.imported.name
+              : specifier.imported.value
+          return {
+            exportedName: importedName,
+            filePath: resolvedSourcePath,
+          }
+        }
+
+        function readExportedRole(filePath, exportedName, visited = new Set()) {
+          if (visited.has(filePath)) {
+            return null
+          }
+          visited.add(filePath)
+
           const sourceText = readFileText(filePath)
           if (sourceText === null) {
             return null
@@ -279,11 +581,46 @@ export default {
 
           const escapedName = escapeRegExp(exportedName)
           const exportPattern = new RegExp(
-            String.raw`/\*\*[\s\S]*?@riviere-role\s+([a-z][a-z0-9-]*)[\s\S]*?\*/\s*export\s+(?:interface|type|function|class)\s+${escapedName}\b`,
+            String.raw`export\s+(?:interface|type|function|class)\s+${escapedName}\b`,
             'm',
           )
-          const match = sourceText.match(exportPattern)
-          return match === null ? null : (match[1] ?? null)
+          const exportMatch = exportPattern.exec(sourceText)
+          if (exportMatch !== null) {
+            const prefix = sourceText.slice(0, exportMatch.index)
+            const jsDocComments = [...prefix.matchAll(/\/\*\*[\s\S]*?\*\//g)]
+            const commentMatch = jsDocComments.at(-1)
+            if (commentMatch?.[0] === undefined) {
+              return null
+            }
+            const roleMatch = commentMatch[0].match(/@riviere-role\s+([a-z][a-z0-9-]*)/)
+            return roleMatch?.[1] ?? null
+          }
+
+          const namedReExportPattern = new RegExp(
+            String.raw`export\s*\{[^}]*\b${escapedName}\b[^}]*\}\s*from\s*['"]([^'"]+)['"]`,
+            'm',
+          )
+          const namedReExportMatch = namedReExportPattern.exec(sourceText)
+          if (namedReExportMatch !== null) {
+            const resolvedPath = resolveTypeFile(filePath, namedReExportMatch[1])
+            if (resolvedPath !== null) {
+              return readExportedRole(resolvedPath, exportedName, visited)
+            }
+          }
+
+          const wildcardReExportPattern = /export\s*\*\s*from\s*['"]([^'"]+)['"]/gm
+          let wildcardMatch
+          while ((wildcardMatch = wildcardReExportPattern.exec(sourceText)) !== null) {
+            const resolvedPath = resolveTypeFile(filePath, wildcardMatch[1])
+            if (resolvedPath !== null) {
+              const role = readExportedRole(resolvedPath, exportedName, visited)
+              if (role !== null) {
+                return role
+              }
+            }
+          }
+
+          return null
         }
 
         function readFileText(filePath) {
@@ -346,6 +683,19 @@ function collectForbiddenRoles(fileRoles, roleMap) {
   return forbiddenSet
 }
 
+function collectForbiddenMethodCallRoles(fileRoles, roleMap) {
+  const forbiddenSet = new Set()
+  for (const roleName of fileRoles) {
+    const role = roleMap.get(roleName)
+    if (role !== undefined && Array.isArray(role.forbiddenMethodCalls)) {
+      for (const dep of role.forbiddenMethodCalls) {
+        forbiddenSet.add(dep)
+      }
+    }
+  }
+  return forbiddenSet
+}
+
 function isTopLevelExported(node) {
   const exportParent = readAnnotationNode(node)
   return (
@@ -390,6 +740,35 @@ function readRoleNames(sourceCode, node) {
   return [...new Set(roleNames)]
 }
 
+function matchesApprovedInstances(name, role) {
+  if (!Array.isArray(role.approvedInstances)) {
+    return { checked: false }
+  }
+
+  const entry = role.approvedInstances.find((instance) => instance.name === name)
+
+  if (!entry) {
+    return {
+      checked: true,
+      passed: false,
+      reason: `'${name}' is not in approvedInstances for role '${role.name}'. Add { name: '${name}', userHasApproved: true } to approvedInstances after getting user approval.`,
+    }
+  }
+
+  if (entry.userHasApproved !== true) {
+    return {
+      checked: true,
+      passed: false,
+      reason: `'${name}' has userHasApproved: false in approvedInstances for role '${role.name}'. Set userHasApproved to true after getting user approval.`,
+    }
+  }
+
+  return {
+    checked: true,
+    passed: true,
+  }
+}
+
 function matchesName(name, role) {
   if (Array.isArray(role.allowedNames)) {
     return role.allowedNames.includes(name)
@@ -407,7 +786,15 @@ function resolveTypeFile(currentFile, importSource) {
   const basePath = path.resolve(sourceDir, importSource)
   const candidates = [basePath, `${basePath}.ts`, path.join(basePath, 'index.ts')]
 
-  return candidates.find((candidate) => fs.existsSync(candidate)) ?? null
+  return (
+    candidates.find((candidate) => {
+      try {
+        return fs.statSync(candidate).isFile()
+      } catch {
+        return false
+      }
+    }) ?? null
+  )
 }
 
 function normalizePath(value) {

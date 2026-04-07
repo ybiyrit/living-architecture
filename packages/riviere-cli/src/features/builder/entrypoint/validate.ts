@@ -1,14 +1,18 @@
 import { Command } from 'commander'
-import { formatSuccess } from '../../../platform/infra/cli-presentation/output'
-import { getDefaultGraphPathDescription } from '../../../platform/infra/graph-persistence/graph-path'
-import { withGraphBuilder } from '../../../platform/infra/graph-persistence/builder-graph-loader'
+import { CliErrorCode } from '../../../platform/infra/cli/presentation/error-codes'
+import { getDefaultGraphPathDescription } from '../../../platform/infra/cli/presentation/graph-path-option'
+import {
+  formatError, formatSuccess 
+} from '../../../platform/infra/cli/presentation/output'
+import type { ValidateGraph } from '../commands/validate-graph'
 
 interface ValidateOptions {
   graph?: string
   json?: boolean
 }
 
-export function createValidateCommand(): Command {
+/** @riviere-role cli-entrypoint */
+export function createValidateCommand(validateGraph: ValidateGraph): Command {
   return new Command('validate')
     .description('Validate the graph for errors and warnings')
     .addHelpText(
@@ -23,21 +27,32 @@ Examples:
     .option('--graph <path>', getDefaultGraphPathDescription())
     .option('--json', 'Output result as JSON')
     .action(async (options: ValidateOptions) => {
-      await withGraphBuilder(options.graph, async (builder) => {
-        const validationResult = builder.validate()
-        const warnings = builder.warnings()
-
-        if (options.json === true) {
-          console.log(
-            JSON.stringify(
-              formatSuccess({
-                valid: validationResult.valid,
-                errors: validationResult.errors,
-                warnings,
-              }),
+      const result = validateGraph.execute({ graphPathOption: options.graph })
+      if (!result.success) {
+        console.log(
+          JSON.stringify(
+            formatError(
+              result.code === 'GRAPH_NOT_FOUND'
+                ? CliErrorCode.GraphNotFound
+                : CliErrorCode.GraphCorrupted,
+              result.message,
+              [],
             ),
-          )
-        }
-      })
+          ),
+        )
+        return
+      }
+
+      if (options.json === true) {
+        console.log(
+          JSON.stringify(
+            formatSuccess({
+              errors: result.errors,
+              valid: result.valid,
+              warnings: result.warnings,
+            }),
+          ),
+        )
+      }
     })
 }

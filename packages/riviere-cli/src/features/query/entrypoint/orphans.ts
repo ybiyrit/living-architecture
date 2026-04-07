@@ -1,16 +1,16 @@
 import { Command } from 'commander'
-import { formatSuccess } from '../../../platform/infra/cli-presentation/output'
-import {
-  withGraph,
-  getDefaultGraphPathDescription,
-} from '../../../platform/infra/graph-persistence/query-graph-loader'
+import { formatSuccess } from '../../../platform/infra/cli/presentation/output'
+import { getDefaultGraphPathDescription } from '../../../platform/infra/cli/presentation/graph-path-option'
+import { handleQueryGraphLoadError } from '../../../platform/infra/cli/presentation/query-graph-load-error-handler'
+import type { DetectOrphans } from '../queries/detect-orphans'
 
 interface OrphansOptions {
   graph?: string
   json?: boolean
 }
 
-export function createOrphansCommand(): Command {
+/** @riviere-role cli-entrypoint */
+export function createOrphansCommand(detectOrphans: DetectOrphans): Command {
   return new Command('orphans')
     .description('Find orphan components with no links')
     .addHelpText(
@@ -24,12 +24,16 @@ Examples:
     .option('--graph <path>', getDefaultGraphPathDescription())
     .option('--json', 'Output result as JSON')
     .action(async (options: OrphansOptions) => {
-      await withGraph(options.graph, (query) => {
-        const orphans = query.detectOrphans()
+      try {
+        const result = detectOrphans.execute({ graphPathOption: options.graph })
 
         if (options.json) {
-          console.log(JSON.stringify(formatSuccess({ orphans })))
+          console.log(JSON.stringify(formatSuccess(result)))
         }
-      })
+      } catch (error) {
+        if (!handleQueryGraphLoadError(error)) {
+          throw error
+        }
+      }
     })
 }

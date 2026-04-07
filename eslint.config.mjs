@@ -40,6 +40,7 @@ export default tseslint.config(
       '**/test-output',
       '**/api/generated/**',
       '**/.vitepress/cache/**',
+      '.riviere/**',
     ],
   },
   eslintComments.recommended,
@@ -50,7 +51,12 @@ export default tseslint.config(
   },
   sonarjs.configs.recommended,
   {
-    files: ['**/infra/cli/git.ts'],
+    rules: {
+      'sonarjs/void-use': 'off',
+    },
+  },
+  {
+    files: ['**/infra/cli/git.ts', '**/infra/external-clients/git/git.ts'],
     rules: {
       'sonarjs/os-command': 'off',
       'sonarjs/no-os-command-from-path': 'off',
@@ -115,6 +121,9 @@ export default tseslint.config(
       '@typescript-eslint/prefer-includes': 'error',
       '@typescript-eslint/prefer-nullish-coalescing': 'error',
       '@typescript-eslint/prefer-optional-chain': 'error',
+      '@typescript-eslint/await-thenable': 'error',
+      '@typescript-eslint/no-floating-promises': 'error',
+      '@typescript-eslint/no-misused-promises': 'error',
       'import/no-duplicates': 'error',
 
       // Ban generic folder imports (not lib - that's NX convention)

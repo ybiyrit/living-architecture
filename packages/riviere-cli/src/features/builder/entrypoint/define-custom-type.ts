@@ -1,13 +1,12 @@
 import { Command } from 'commander'
-import { writeFile } from 'node:fs/promises'
-import { getDefaultGraphPathDescription } from '../../../platform/infra/graph-persistence/graph-path'
-import { withGraphBuilder } from '../../../platform/infra/graph-persistence/builder-graph-loader'
+import { getDefaultGraphPathDescription } from '../../../platform/infra/cli/presentation/graph-path-option'
 import {
   formatError, formatSuccess 
-} from '../../../platform/infra/cli-presentation/output'
-import { CliErrorCode } from '../../../platform/infra/cli-presentation/error-codes'
-import { parsePropertySpecs } from '../../../platform/infra/cli-presentation/custom-type-parser'
-import { collectOption } from '../../../platform/infra/cli-presentation/option-collectors'
+} from '../../../platform/infra/cli/presentation/output'
+import { CliErrorCode } from '../../../platform/infra/cli/presentation/error-codes'
+import { parsePropertySpecs } from '../../../platform/infra/cli/input/custom-type-parser'
+import { collectOption } from '../../../platform/infra/cli/input/option-collectors'
+import type { DefineCustomType } from '../commands/define-custom-type'
 
 interface DefineCustomTypeOptions {
   name: string
@@ -18,7 +17,8 @@ interface DefineCustomTypeOptions {
   json?: boolean
 }
 
-export function createDefineCustomTypeCommand(): Command {
+/** @riviere-role cli-entrypoint */
+export function createDefineCustomTypeCommand(defineCustomType: DefineCustomType): Command {
   return new Command('define-custom-type')
     .description('Define a custom component type')
     .requiredOption('--name <name>', 'Custom type name')
@@ -54,27 +54,27 @@ export function createDefineCustomTypeCommand(): Command {
         return
       }
 
-      await withGraphBuilder(options.graph, async (builder, graphPath) => {
-        builder.defineCustomType({
-          name: options.name,
-          ...(options.description !== undefined && { description: options.description }),
-          ...(Object.keys(requiredResult.properties).length > 0 && {requiredProperties: requiredResult.properties,}),
-          ...(Object.keys(optionalResult.properties).length > 0 && {optionalProperties: optionalResult.properties,}),
-        })
-        await writeFile(graphPath, builder.serialize(), 'utf-8')
-
-        if (options.json === true) {
-          console.log(
-            JSON.stringify(
-              formatSuccess({
-                name: options.name,
-                ...(options.description !== undefined && { description: options.description }),
-                ...(Object.keys(requiredResult.properties).length > 0 && {requiredProperties: requiredResult.properties,}),
-                ...(Object.keys(optionalResult.properties).length > 0 && {optionalProperties: optionalResult.properties,}),
-              }),
-            ),
-          )
-        }
+      const result = defineCustomType.execute({
+        description: options.description,
+        graphPathOption: options.graph,
+        name: options.name,
+        optionalProperties: optionalResult.properties,
+        requiredProperties: requiredResult.properties,
       })
+      if (!result.success) {
+        const errorCodeByResult = {
+          GRAPH_CORRUPTED: CliErrorCode.GraphCorrupted,
+          GRAPH_NOT_FOUND: CliErrorCode.GraphNotFound,
+          VALIDATION_ERROR: CliErrorCode.ValidationError,
+        } as const
+        const errorCode = errorCodeByResult[result.code]
+
+        console.log(JSON.stringify(formatError(errorCode, result.message, [])))
+        return
+      }
+
+      if (options.json === true) {
+        console.log(JSON.stringify(formatSuccess(result)))
+      }
     })
 }

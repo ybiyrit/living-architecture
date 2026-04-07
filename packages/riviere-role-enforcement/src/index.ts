@@ -1,17 +1,23 @@
-export type {
-  LayerDefinition,
-  RoleDefinition,
-  RoleEnforcementConfig,
-  RoleTarget,
-} from './config/role-enforcement-config'
 export {
-  loadRoleEnforcementConfig,
-  type LoadedRoleEnforcementConfig,
-} from './config/load-role-enforcement-config'
-export { RoleEnforcementConfigError } from './config/role-enforcement-config-error'
+  createRoleFactory,
+  location,
+  role,
+  roleEnforcement,
+} from './features/enforcement/domain/role-enforcement-builder'
+export type {
+  BuiltLocation,
+  BuiltRole,
+  LocationBuilder,
+  RoleEnforcementResult,
+  RoleTarget,
+} from './features/enforcement/domain/role-enforcement-builder'
+export {
+  filterConfigByPackage,
+  PackageFilterError,
+} from './features/enforcement/domain/filter-config-by-package'
 export {
   formatRoleEnforcementFailure,
   RoleEnforcementExecutionError,
   runRoleEnforcement,
   type RoleEnforcementRunResult,
-} from './cli/run-role-enforcement'
+} from './features/enforcement/infra/external-clients/oxlint/run-role-enforcement'

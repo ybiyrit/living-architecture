@@ -1,143 +1,87 @@
 import {
-  readFile, writeFile 
-} from 'node:fs/promises'
-import {
-  RiviereBuilder,
   CustomTypeNotFoundError,
   DomainNotFoundError,
   DuplicateComponentError,
 } from '@living-architecture/riviere-builder'
-import { parseRiviereGraph } from '@living-architecture/riviere-schema'
-import { fileExists } from '../../../platform/infra/graph-persistence/file-existence'
-import {
-  formatError, formatSuccess 
-} from '../../../platform/infra/cli-presentation/output'
-import { CliErrorCode } from '../../../platform/infra/cli-presentation/error-codes'
-import {
-  isValidComponentType,
-  VALID_COMPONENT_TYPES,
-} from '../../../platform/infra/cli-presentation/component-types'
-import {
-  MissingRequiredOptionError,
-  InvalidCustomPropertyError,
-} from '../../../platform/infra/errors/errors'
 import { addComponentToBuilder } from '../../../platform/domain/add-component'
 import {
-  buildDomainInput,
-  type AddComponentInput,
-} from '../../../platform/infra/component-mapping/add-component-mapper'
+  createDomainInput,
+  isAddComponentValidationError,
+} from '../../../platform/domain/add-component-input-factory'
+import { GraphCorruptedError } from '../../../platform/domain/graph-corrupted-error'
+import { GraphNotFoundError } from '../../../platform/domain/graph-not-found-error'
+import { RiviereBuilderRepository } from '../infra/persistence/riviere-builder-repository'
+import type { AddComponentInput } from './add-component-input'
+import type {
+  AddComponentErrorCode, AddComponentResult 
+} from './add-component-result'
 
-export async function addComponent(input: AddComponentInput): Promise<void> {
-  if (!isValidComponentType(input.componentType)) {
-    console.log(
-      JSON.stringify(
-        formatError(
-          CliErrorCode.ValidationError,
-          `Invalid component type: ${input.componentType}`,
-          [`Valid types: ${VALID_COMPONENT_TYPES.join(', ')}`],
-        ),
-      ),
-    )
-    return
-  }
+const validComponentTypes = new Set([
+  'ui',
+  'api',
+  'usecase',
+  'domainop',
+  'event',
+  'eventhandler',
+  'custom',
+])
 
-  if (
-    input.lineNumber !== undefined &&
-    (!Number.isInteger(input.lineNumber) || input.lineNumber < 1)
-  ) {
-    console.log(
-      JSON.stringify(
-        formatError(
-          CliErrorCode.ValidationError,
-          'Invalid line number: must be a positive integer',
-          [],
-        ),
-      ),
-    )
-    return
-  }
+/** @riviere-role command-use-case */
+export class AddComponent {
+  constructor(private readonly repository: RiviereBuilderRepository) {}
 
-  const graphExists = await fileExists(input.graphPath)
-  if (!graphExists) {
-    console.log(
-      JSON.stringify(
-        formatError(CliErrorCode.GraphNotFound, `Graph not found at ${input.graphPath}`, [
-          'Run riviere builder init first',
-        ]),
-      ),
-    )
-    return
-  }
-
-  const content = await readFile(input.graphPath, 'utf-8')
-  const parsedContent = tryParseJson(content)
-  if (parsedContent === null) {
-    console.log(
-      JSON.stringify(
-        formatError(CliErrorCode.ValidationError, 'Graph file contains invalid JSON', [
-          'Ensure the graph file is valid JSON',
-        ]),
-      ),
-    )
-    return
-  }
-  const graph = parseRiviereGraph(parsedContent)
-  const builder = RiviereBuilder.resume(graph)
-
-  try {
-    const domainInput = buildDomainInput(input)
-    const componentId = addComponentToBuilder(builder, domainInput)
-    await writeFile(input.graphPath, builder.serialize(), 'utf-8')
-    if (input.outputJson) {
-      console.log(JSON.stringify(formatSuccess({ componentId })))
+  execute(input: AddComponentInput): AddComponentResult {
+    if (!validComponentTypes.has(input.componentType.toLowerCase())) {
+      return failure('VALIDATION_ERROR', `Invalid component type: ${input.componentType}`)
     }
-  } catch (error) {
-    handleError(error)
+
+    if (
+      input.lineNumber !== undefined &&
+      (!Number.isInteger(input.lineNumber) || input.lineNumber < 1)
+    ) {
+      return failure('VALIDATION_ERROR', 'Invalid line number: must be a positive integer')
+    }
+
+    try {
+      const builder = this.repository.load(input.graphPathOption)
+      const componentId = addComponentToBuilder(builder, createDomainInput(input))
+      this.repository.save(builder)
+      return {
+        success: true,
+        componentId,
+      }
+    } catch (error) {
+      if (error instanceof GraphNotFoundError) return failure('GRAPH_NOT_FOUND', error.message)
+      if (error instanceof GraphCorruptedError)
+        return failure('VALIDATION_ERROR', 'Graph file contains invalid JSON')
+      return mapError(error)
+    }
   }
 }
 
-function tryParseJson(content: string): unknown | null {
-  try {
-    return JSON.parse(content)
-  } catch {
-    return null
-  }
-}
-
-function handleError(error: unknown): void {
-  if (error instanceof MissingRequiredOptionError) {
-    console.log(JSON.stringify(formatError(CliErrorCode.ValidationError, error.message, [])))
-    return
-  }
-  if (error instanceof InvalidCustomPropertyError) {
-    console.log(JSON.stringify(formatError(CliErrorCode.ValidationError, error.message, [])))
-    return
-  }
+function mapError(error: unknown): AddComponentResult {
   if (error instanceof DomainNotFoundError) {
-    console.log(
-      JSON.stringify(
-        formatError(CliErrorCode.DomainNotFound, error.message, [
-          'Run riviere builder add-domain first',
-        ]),
-      ),
-    )
-    return
+    return failure('DOMAIN_NOT_FOUND', error.message)
   }
   if (error instanceof CustomTypeNotFoundError) {
-    console.log(
-      JSON.stringify(
-        formatError(CliErrorCode.CustomTypeNotFound, error.message, [
-          'Run riviere builder add-custom-type first',
-        ]),
-      ),
-    )
-    return
+    return failure('CUSTOM_TYPE_NOT_FOUND', error.message)
   }
-  /* v8 ignore start -- @preserve: DuplicateComponentError tested at entrypoint; defensive re-throw for unknown errors */
   if (error instanceof DuplicateComponentError) {
-    console.log(JSON.stringify(formatError(CliErrorCode.DuplicateComponent, error.message, [])))
-    return
+    return failure('DUPLICATE_COMPONENT', error.message)
+  }
+  if (isAddComponentValidationError(error)) {
+    return failure('VALIDATION_ERROR', error.message)
+  }
+  if (error instanceof Error) {
+    return failure('VALIDATION_ERROR', error.message)
   }
   throw error
-  /* v8 ignore stop */
+}
+
+function failure(code: AddComponentErrorCode, message: string): AddComponentResult {
+  return {
+    success: false,
+    code,
+    message,
+  }
 }

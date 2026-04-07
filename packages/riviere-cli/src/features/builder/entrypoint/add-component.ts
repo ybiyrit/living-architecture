@@ -1,9 +1,13 @@
 import { Command } from 'commander'
+import { CliErrorCode } from '../../../platform/infra/cli/presentation/error-codes'
+import { getDefaultGraphPathDescription } from '../../../platform/infra/cli/presentation/graph-path-option'
 import {
-  getDefaultGraphPathDescription,
-  resolveGraphPath,
-} from '../../../platform/infra/graph-persistence/graph-path'
-import { addComponent } from '../commands/add-component'
+  formatError, formatSuccess 
+} from '../../../platform/infra/cli/presentation/output'
+import { getAddComponentHints } from '../../../platform/infra/cli/presentation/add-component-hints'
+import { toAddComponentInput } from '../../../platform/infra/cli/input/add-component-options'
+import type { AddComponent } from '../commands/add-component'
+import type { AddComponentErrorCode } from '../commands/add-component-result'
 
 interface CliOptions {
   type: string
@@ -29,7 +33,8 @@ interface CliOptions {
   json?: boolean
 }
 
-export function createAddComponentCommand(): Command {
+/** @riviere-role cli-entrypoint */
+export function createAddComponentCommand(addComponent: AddComponent): Command {
   return new Command('add-component')
     .description('Add a component to the graph')
     .requiredOption(
@@ -62,28 +67,28 @@ export function createAddComponentCommand(): Command {
     .option('--graph <path>', getDefaultGraphPathDescription())
     .option('--json', 'Output result as JSON')
     .action(async (options: CliOptions) => {
-      await addComponent({
-        componentType: options.type,
-        name: options.name,
-        domain: options.domain,
-        module: options.module,
-        repository: options.repository,
-        filePath: options.filePath,
-        graphPath: resolveGraphPath(options.graph),
-        lineNumber: options.lineNumber ? parseInt(options.lineNumber, 10) : undefined,
-        route: options.route,
-        apiType: options.apiType,
-        httpMethod: options.httpMethod,
-        httpPath: options.httpPath,
-        operationName: options.operationName,
-        entity: options.entity,
-        eventName: options.eventName,
-        eventSchema: options.eventSchema,
-        subscribedEvents: options.subscribedEvents,
-        customType: options.customType,
-        customProperty: options.customProperty,
-        description: options.description,
-        outputJson: options.json ?? false,
-      })
+      const result = addComponent.execute(toAddComponentInput(options))
+
+      if (!result.success) {
+        const cliErrorCode = CLI_ERROR_CODES[result.code]
+        console.log(
+          JSON.stringify(
+            formatError(cliErrorCode, result.message, getAddComponentHints(cliErrorCode)),
+          ),
+        )
+        return
+      }
+
+      if (options.json) {
+        console.log(JSON.stringify(formatSuccess({ componentId: result.componentId })))
+      }
     })
+}
+
+const CLI_ERROR_CODES: Record<AddComponentErrorCode, CliErrorCode> = {
+  VALIDATION_ERROR: CliErrorCode.ValidationError,
+  GRAPH_NOT_FOUND: CliErrorCode.GraphNotFound,
+  DOMAIN_NOT_FOUND: CliErrorCode.DomainNotFound,
+  CUSTOM_TYPE_NOT_FOUND: CliErrorCode.CustomTypeNotFound,
+  DUPLICATE_COMPONENT: CliErrorCode.DuplicateComponent,
 }

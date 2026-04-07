@@ -1,17 +1,17 @@
 import { Command } from 'commander'
-import { formatSuccess } from '../../../platform/infra/cli-presentation/output'
-import {
-  withGraph,
-  getDefaultGraphPathDescription,
-} from '../../../platform/infra/graph-persistence/query-graph-loader'
-import { toComponentOutput } from '../../../platform/infra/cli-presentation/component-output'
+import { formatSuccess } from '../../../platform/infra/cli/presentation/output'
+import { getDefaultGraphPathDescription } from '../../../platform/infra/cli/presentation/graph-path-option'
+import { handleQueryGraphLoadError } from '../../../platform/infra/cli/presentation/query-graph-load-error-handler'
+import { toComponentOutput } from '../../../platform/infra/cli/presentation/component-output'
+import type { SearchComponents } from '../queries/search-components'
 
 interface SearchOptions {
   graph?: string
   json?: boolean
 }
 
-export function createSearchCommand(): Command {
+/** @riviere-role cli-entrypoint */
+export function createSearchCommand(searchComponents: SearchComponents): Command {
   return new Command('search')
     .description('Search components by name')
     .addHelpText(
@@ -26,13 +26,20 @@ Examples:
     .option('--graph <path>', getDefaultGraphPathDescription())
     .option('--json', 'Output result as JSON')
     .action(async (term: string, options: SearchOptions) => {
-      await withGraph(options.graph, (query) => {
-        const result = query.search(term)
-        const components = result.map(toComponentOutput)
+      try {
+        const result = searchComponents.execute({
+          graphPathOption: options.graph,
+          term,
+        })
+        const components = result.components.map(toComponentOutput)
 
         if (options.json) {
           console.log(JSON.stringify(formatSuccess({ components })))
         }
-      })
+      } catch (error) {
+        if (!handleQueryGraphLoadError(error)) {
+          throw error
+        }
+      }
     })
 }

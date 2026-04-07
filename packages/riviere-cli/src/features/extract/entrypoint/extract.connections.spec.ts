@@ -13,7 +13,7 @@ import {
   createValidExtractFixture,
 } from '../__fixtures__/extraction-test-fixtures'
 
-vi.mock('../../../platform/infra/git/git-repository-info', () => ({
+vi.mock('../../../platform/infra/external-clients/git/git-repository-info', () => ({
   getRepositoryInfo: vi.fn(() => ({
     name: 'test/repo',
     owner: 'test',

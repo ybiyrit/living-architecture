@@ -1,11 +1,15 @@
 import { Command } from 'commander'
-import { getDefaultGraphPathDescription } from '../../../platform/infra/graph-persistence/graph-path'
-import { formatSuccess } from '../../../platform/infra/cli-presentation/output'
-import { withGraphBuilder } from '../../../platform/infra/graph-persistence/builder-graph-loader'
+import { CliErrorCode } from '../../../platform/infra/cli/presentation/error-codes'
+import { getDefaultGraphPathDescription } from '../../../platform/infra/cli/presentation/graph-path-option'
+import {
+  formatError, formatSuccess 
+} from '../../../platform/infra/cli/presentation/output'
+import type { ComponentSummary } from '../commands/component-summary'
 
 interface ComponentSummaryOptions {graph?: string}
 
-export function createComponentSummaryCommand(): Command {
+/** @riviere-role cli-entrypoint */
+export function createComponentSummaryCommand(componentSummary: ComponentSummary): Command {
   return new Command('component-summary')
     .description('Show component counts by type and domain')
     .addHelpText(
@@ -18,9 +22,22 @@ Examples:
     )
     .option('--graph <path>', getDefaultGraphPathDescription())
     .action(async (options: ComponentSummaryOptions) => {
-      await withGraphBuilder(options.graph, async (builder) => {
-        const stats = builder.stats()
-        console.log(JSON.stringify(formatSuccess(stats)))
-      })
+      const result = componentSummary.execute({ graphPathOption: options.graph })
+      if (!result.success) {
+        console.log(
+          JSON.stringify(
+            formatError(
+              result.code === 'GRAPH_NOT_FOUND'
+                ? CliErrorCode.GraphNotFound
+                : CliErrorCode.GraphCorrupted,
+              result.message,
+              [],
+            ),
+          ),
+        )
+        return
+      }
+
+      console.log(JSON.stringify(formatSuccess(result)))
     })
 }

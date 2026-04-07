@@ -1,18 +1,17 @@
 import { Command } from 'commander'
 import {
   formatSuccess, formatError 
-} from '../../../platform/infra/cli-presentation/output'
-import { CliErrorCode } from '../../../platform/infra/cli-presentation/error-codes'
-import {
-  withGraph,
-  getDefaultGraphPathDescription,
-} from '../../../platform/infra/graph-persistence/query-graph-loader'
+} from '../../../platform/infra/cli/presentation/output'
+import { CliErrorCode } from '../../../platform/infra/cli/presentation/error-codes'
+import { getDefaultGraphPathDescription } from '../../../platform/infra/cli/presentation/graph-path-option'
 import {
   isValidComponentType,
   normalizeToSchemaComponentType,
   VALID_COMPONENT_TYPES,
-} from '../../../platform/infra/cli-presentation/component-types'
-import { toComponentOutput } from '../../../platform/infra/cli-presentation/component-output'
+} from '../../../platform/infra/cli/input/component-types'
+import { handleQueryGraphLoadError } from '../../../platform/infra/cli/presentation/query-graph-load-error-handler'
+import { toComponentOutput } from '../../../platform/infra/cli/presentation/component-output'
+import type { ListComponents } from '../queries/list-components'
 
 interface ComponentsOptions {
   graph?: string
@@ -21,7 +20,8 @@ interface ComponentsOptions {
   type?: string
 }
 
-export function createComponentsCommand(): Command {
+/** @riviere-role cli-entrypoint */
+export function createComponentsCommand(listComponents: ListComponents): Command {
   return new Command('components')
     .description('List components with optional filtering')
     .addHelpText(
@@ -49,26 +49,23 @@ Examples:
         return
       }
 
-      await withGraph(options.graph, (query) => {
-        const allComponents = query.components()
+      try {
+        const result = listComponents.execute({
+          domain: options.domain,
+          graphPathOption: options.graph,
+          type:
+            options.type === undefined ? undefined : normalizeToSchemaComponentType(options.type),
+        })
 
-        const filteredByDomain =
-          options.domain === undefined
-            ? allComponents
-            : allComponents.filter((c) => c.domain === options.domain)
-
-        const typeFilter =
-          options.type === undefined ? undefined : normalizeToSchemaComponentType(options.type)
-        const filteredByType =
-          typeFilter === undefined
-            ? filteredByDomain
-            : filteredByDomain.filter((c) => c.type === typeFilter)
-
-        const components = filteredByType.map(toComponentOutput)
+        const components = result.components.map(toComponentOutput)
 
         if (options.json) {
           console.log(JSON.stringify(formatSuccess({ components })))
         }
-      })
+      } catch (error) {
+        if (!handleQueryGraphLoadError(error)) {
+          throw error
+        }
+      }
     })
 }

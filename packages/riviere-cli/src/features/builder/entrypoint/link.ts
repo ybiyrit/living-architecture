@@ -1,25 +1,19 @@
 import { Command } from 'commander'
-import { writeFile } from 'node:fs/promises'
 import { ComponentId } from '@living-architecture/riviere-builder'
+import { getDefaultGraphPathDescription } from '../../../platform/infra/cli/presentation/graph-path-option'
 import {
-  getDefaultGraphPathDescription,
-  resolveGraphPath,
-} from '../../../platform/infra/graph-persistence/graph-path'
-import { fileExists } from '../../../platform/infra/graph-persistence/file-existence'
-import { formatSuccess } from '../../../platform/infra/cli-presentation/output'
+  formatSuccess, formatError 
+} from '../../../platform/infra/cli/presentation/output'
 import {
   isValidLinkType,
   normalizeComponentType,
-} from '../../../platform/infra/cli-presentation/component-types'
+} from '../../../platform/infra/cli/input/component-types'
 import {
   validateComponentType,
   validateLinkType,
-} from '../../../platform/infra/cli-presentation/validation'
-import {
-  loadGraphBuilder,
-  reportGraphNotFound,
-  tryBuilderOperation,
-} from '../../../platform/infra/graph-persistence/builder-graph-loader'
+} from '../../../platform/infra/cli/input/validation'
+import { CliErrorCode } from '../../../platform/infra/cli/presentation/error-codes'
+import type { LinkComponents } from '../commands/link-components'
 
 interface LinkOptions {
   from: string
@@ -32,7 +26,8 @@ interface LinkOptions {
   json?: boolean
 }
 
-export function createLinkCommand(): Command {
+/** @riviere-role cli-entrypoint */
+export function createLinkCommand(linkComponents: LinkComponents): Command {
   return new Command('link')
     .description('Link two components')
     .addHelpText(
@@ -74,45 +69,36 @@ Examples:
         return
       }
 
-      const graphPath = resolveGraphPath(options.graph)
-      const graphExists = await fileExists(graphPath)
+      const linkType =
+        options.linkType !== undefined && isValidLinkType(options.linkType)
+          ? options.linkType
+          : undefined
 
-      if (!graphExists) {
-        reportGraphNotFound(graphPath)
-        return
-      }
-
-      const builder = await loadGraphBuilder(graphPath)
-
-      const targetId = ComponentId.create({
-        domain: options.toDomain,
-        module: options.toModule,
-        type: normalizeComponentType(options.toType),
-        name: options.toName,
-      }).toString()
-
-      const linkInput: {
-        from: string
-        to: string
-        type?: 'sync' | 'async'
-      } = {
+      const result = linkComponents.execute({
         from: options.from,
-        to: targetId,
-      }
+        graphPathOption: options.graph,
+        to: ComponentId.create({
+          domain: options.toDomain,
+          module: options.toModule,
+          type: normalizeComponentType(options.toType),
+          name: options.toName,
+        }).toString(),
+        type: linkType,
+      })
+      if (!result.success) {
+        const errorCodeByResult = {
+          COMPONENT_NOT_FOUND: CliErrorCode.ComponentNotFound,
+          GRAPH_CORRUPTED: CliErrorCode.GraphCorrupted,
+          GRAPH_NOT_FOUND: CliErrorCode.GraphNotFound,
+        } as const
+        const errorCode = errorCodeByResult[result.code]
 
-      if (options.linkType !== undefined && isValidLinkType(options.linkType)) {
-        linkInput.type = options.linkType
-      }
-
-      const linkResult = tryBuilderOperation(() => builder.link(linkInput))
-      if (linkResult === undefined) {
+        console.log(JSON.stringify(formatError(errorCode, result.message, result.suggestions)))
         return
       }
-
-      await writeFile(graphPath, builder.serialize(), 'utf-8')
 
       if (options.json) {
-        console.log(JSON.stringify(formatSuccess({ link: linkResult })))
+        console.log(JSON.stringify(formatSuccess({ link: result.link })))
       }
     })
 }

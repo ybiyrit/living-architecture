@@ -1,14 +1,18 @@
 import { Command } from 'commander'
-import { getDefaultGraphPathDescription } from '../../../platform/infra/graph-persistence/graph-path'
-import { formatSuccess } from '../../../platform/infra/cli-presentation/output'
-import { withGraphBuilder } from '../../../platform/infra/graph-persistence/builder-graph-loader'
+import { CliErrorCode } from '../../../platform/infra/cli/presentation/error-codes'
+import { getDefaultGraphPathDescription } from '../../../platform/infra/cli/presentation/graph-path-option'
+import {
+  formatError, formatSuccess 
+} from '../../../platform/infra/cli/presentation/output'
+import type { CheckConsistency } from '../commands/check-consistency'
 
 interface CheckConsistencyOptions {
   graph?: string
   json?: boolean
 }
 
-export function createCheckConsistencyCommand(): Command {
+/** @riviere-role cli-entrypoint */
+export function createCheckConsistencyCommand(checkConsistency: CheckConsistency): Command {
   return new Command('check-consistency')
     .description('Check for structural issues in the graph')
     .addHelpText(
@@ -22,20 +26,31 @@ Examples:
     .option('--graph <path>', getDefaultGraphPathDescription())
     .option('--json', 'Output result as JSON')
     .action(async (options: CheckConsistencyOptions) => {
-      await withGraphBuilder(options.graph, async (builder) => {
-        const warnings = builder.warnings()
-        const consistent = warnings.length === 0
-
-        if (options.json === true) {
-          console.log(
-            JSON.stringify(
-              formatSuccess({
-                consistent,
-                warnings,
-              }),
+      const result = checkConsistency.execute({ graphPathOption: options.graph })
+      if (!result.success) {
+        console.log(
+          JSON.stringify(
+            formatError(
+              result.code === 'GRAPH_NOT_FOUND'
+                ? CliErrorCode.GraphNotFound
+                : CliErrorCode.GraphCorrupted,
+              result.message,
+              [],
             ),
-          )
-        }
-      })
+          ),
+        )
+        return
+      }
+
+      if (options.json === true) {
+        console.log(
+          JSON.stringify(
+            formatSuccess({
+              consistent: result.consistent,
+              warnings: result.warnings,
+            }),
+          ),
+        )
+      }
     })
 }

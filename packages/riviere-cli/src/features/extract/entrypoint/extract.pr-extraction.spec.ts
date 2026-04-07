@@ -10,14 +10,14 @@ import {
   parseErrorOutput,
   parseCommandWithErrorHandling,
 } from '../../../platform/__fixtures__/command-test-fixtures'
-import { CliErrorCode } from '../../../platform/infra/cli-presentation/error-codes'
+import { CliErrorCode } from '../../../platform/infra/cli/presentation/error-codes'
 import {
   parseExtractionOutput,
   parseFullExtractionOutput,
   createValidExtractFixture,
 } from '../__fixtures__/extraction-test-fixtures'
 
-vi.mock('../../../platform/infra/git/git-repository-info', () => ({
+vi.mock('../../../platform/infra/external-clients/git/git-repository-info', () => ({
   getRepositoryInfo: vi.fn(() => ({
     name: 'test/repo',
     owner: 'test',
@@ -25,19 +25,24 @@ vi.mock('../../../platform/infra/git/git-repository-info', () => ({
   })),
 }))
 
-vi.mock('../../../platform/infra/git/git-changed-files', async (importOriginal) => {
-  const original =
-    await importOriginal<typeof import('../../../platform/infra/git/git-changed-files')>()
-  return {
-    ...original,
-    detectChangedTypeScriptFiles: vi.fn(),
-  }
-})
+vi.mock(
+  '../../../platform/infra/external-clients/git/git-changed-files',
+  async (importOriginal) => {
+    const original =
+      await importOriginal<
+        typeof import('../../../platform/infra/external-clients/git/git-changed-files')
+      >()
+    return {
+      ...original,
+      detectChangedTypeScriptFiles: vi.fn(),
+    }
+  },
+)
 
 import {
   detectChangedTypeScriptFiles,
   GitError,
-} from '../../../platform/infra/git/git-changed-files'
+} from '../../../platform/infra/external-clients/git/git-changed-files'
 
 const mockDetectChanged = vi.mocked(detectChangedTypeScriptFiles)
 

@@ -1,26 +1,13 @@
 import { Command } from 'commander'
-import { writeFile } from 'node:fs/promises'
-import type { ExternalTarget } from '@living-architecture/riviere-schema'
+import { getDefaultGraphPathDescription } from '../../../platform/infra/cli/presentation/graph-path-option'
 import {
-  getDefaultGraphPathDescription,
-  resolveGraphPath,
-} from '../../../platform/infra/graph-persistence/graph-path'
-import { fileExists } from '../../../platform/infra/graph-persistence/file-existence'
-import { formatSuccess } from '../../../platform/infra/cli-presentation/output'
-import { isValidLinkType } from '../../../platform/infra/cli-presentation/component-types'
-import { validateLinkType } from '../../../platform/infra/cli-presentation/validation'
-import {
-  loadGraphBuilder,
-  reportGraphNotFound,
-  tryBuilderOperation,
-} from '../../../platform/infra/graph-persistence/builder-graph-loader'
-import { buildExternalTarget } from '../../../platform/infra/cli-presentation/link-external-transformer'
-
-interface ExternalLinkInput {
-  from: string
-  target: ExternalTarget
-  type?: 'sync' | 'async'
-}
+  formatError, formatSuccess 
+} from '../../../platform/infra/cli/presentation/output'
+import { CliErrorCode } from '../../../platform/infra/cli/presentation/error-codes'
+import { isValidLinkType } from '../../../platform/infra/cli/input/component-types'
+import { validateLinkType } from '../../../platform/infra/cli/input/validation'
+import { buildExternalTarget } from '../../../platform/infra/cli/input/link-external-transformer'
+import type { LinkExternal } from '../commands/link-external'
 
 interface LinkExternalOptions {
   from: string
@@ -32,7 +19,8 @@ interface LinkExternalOptions {
   json?: boolean
 }
 
-export function createLinkExternalCommand(): Command {
+/** @riviere-role cli-entrypoint */
+export function createLinkExternalCommand(linkExternal: LinkExternal): Command {
   return new Command('link-external')
     .description('Link a component to an external system')
     .addHelpText(
@@ -66,35 +54,31 @@ Examples:
         return
       }
 
-      const graphPath = resolveGraphPath(options.graph)
-      const graphExists = await fileExists(graphPath)
+      const linkType =
+        options.linkType !== undefined && isValidLinkType(options.linkType)
+          ? options.linkType
+          : undefined
 
-      if (!graphExists) {
-        reportGraphNotFound(graphPath)
-        return
-      }
-
-      const builder = await loadGraphBuilder(graphPath)
-      const target = buildExternalTarget(options)
-
-      const externalLinkInput: ExternalLinkInput = {
+      const result = linkExternal.execute({
         from: options.from,
-        target,
-      }
+        graphPathOption: options.graph,
+        target: buildExternalTarget(options),
+        type: linkType,
+      })
+      if (!result.success) {
+        const errorCodeByResult = {
+          COMPONENT_NOT_FOUND: CliErrorCode.ComponentNotFound,
+          GRAPH_CORRUPTED: CliErrorCode.GraphCorrupted,
+          GRAPH_NOT_FOUND: CliErrorCode.GraphNotFound,
+        } as const
+        const errorCode = errorCodeByResult[result.code]
 
-      if (options.linkType !== undefined && isValidLinkType(options.linkType)) {
-        externalLinkInput.type = options.linkType
-      }
-
-      const externalLink = tryBuilderOperation(() => builder.linkExternal(externalLinkInput))
-      if (externalLink === undefined) {
+        console.log(JSON.stringify(formatError(errorCode, result.message, result.suggestions)))
         return
       }
-
-      await writeFile(graphPath, builder.serialize(), 'utf-8')
 
       if (options.json) {
-        console.log(JSON.stringify(formatSuccess({ externalLink })))
+        console.log(JSON.stringify(formatSuccess({ externalLink: result.externalLink })))
       }
     })
 }

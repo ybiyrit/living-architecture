@@ -1,22 +1,12 @@
 import { Command } from 'commander'
 import {
-  mkdir, writeFile 
-} from 'node:fs/promises'
-import { dirname } from 'node:path'
-import { RiviereBuilder } from '@living-architecture/riviere-builder'
-import type { BuilderOptions } from '@living-architecture/riviere-builder'
-import {
   formatError, formatSuccess 
-} from '../../../platform/infra/cli-presentation/output'
-import { CliErrorCode } from '../../../platform/infra/cli-presentation/error-codes'
-import { fileExists } from '../../../platform/infra/graph-persistence/file-existence'
-import {
-  resolveGraphPath,
-  getDefaultGraphPathDescription,
-} from '../../../platform/infra/graph-persistence/graph-path'
-import { collectOption } from '../../../platform/infra/cli-presentation/option-collectors'
-import { parseDomainJson } from '../../../platform/infra/cli-presentation/domain-input-parser'
-import type { DomainInputParsed } from '../../../platform/infra/cli-presentation/domain-input-parser'
+} from '../../../platform/infra/cli/presentation/output'
+import { CliErrorCode } from '../../../platform/infra/cli/presentation/error-codes'
+import { getDefaultGraphPathDescription } from '../../../platform/infra/cli/presentation/graph-path-option'
+import { collectOption } from '../../../platform/infra/cli/input/option-collectors'
+import { parseDomainJson } from '../../../platform/infra/cli/input/domain-input-parser'
+import type { InitGraph } from '../commands/init-graph'
 
 interface InitOptions {
   name?: string
@@ -26,7 +16,14 @@ interface InitOptions {
   domain: DomainInputParsed[]
 }
 
-export function createInitCommand(): Command {
+interface DomainInputParsed {
+  description: string
+  name: string
+  systemType: 'domain' | 'bff' | 'ui' | 'other'
+}
+
+/** @riviere-role cli-entrypoint */
+export function createInitCommand(initGraph: InitGraph): Command {
   return new Command('init')
     .description('Initialize a new graph')
     .addHelpText(
@@ -72,15 +69,25 @@ Examples:
         return
       }
 
-      const graphPath = resolveGraphPath(options.graph)
-      const graphDir = dirname(graphPath)
+      const domains = options.domain.map(({
+        description, name, systemType 
+      }) => ({
+        description,
+        name,
+        systemType,
+      }))
 
-      const graphExists = await fileExists(graphPath)
+      const result = initGraph.execute({
+        domains,
+        graphPathOption: options.graph,
+        name: options.name,
+        sources: options.source,
+      })
 
-      if (graphExists) {
+      if (!result.success) {
         console.log(
           JSON.stringify(
-            formatError(CliErrorCode.GraphExists, `Graph already exists at ${graphPath}`, [
+            formatError(CliErrorCode.GraphExists, result.message, [
               'Delete the file to reinitialize',
             ]),
           ),
@@ -88,36 +95,13 @@ Examples:
         return
       }
 
-      const domains: BuilderOptions['domains'] = {}
-      for (const d of options.domain) {
-        domains[d.name] = {
-          description: d.description,
-          systemType: d.systemType,
-        }
-      }
-
-      const builderOptions: BuilderOptions = {
-        sources: options.source.map((url) => ({ repository: url })),
-        domains,
-      }
-
-      if (options.name !== undefined) {
-        builderOptions.name = options.name
-      }
-
-      const builder = RiviereBuilder.new(builderOptions)
-
-      await mkdir(graphDir, { recursive: true })
-      await writeFile(graphPath, builder.serialize(), 'utf-8')
-
       if (options.json === true) {
-        const domainNames = options.domain.map((d) => d.name)
         console.log(
           JSON.stringify(
             formatSuccess({
-              path: graphPath,
-              sources: options.source.length,
-              domains: domainNames,
+              domains: result.domains,
+              path: result.path,
+              sources: result.sources,
             }),
           ),
         )

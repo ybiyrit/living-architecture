@@ -1,11 +1,11 @@
 import { Command } from 'commander'
-import { getDefaultGraphPathDescription } from '../../../platform/infra/graph-persistence/graph-path'
+import { getDefaultGraphPathDescription } from '../../../platform/infra/cli/presentation/graph-path-option'
 import {
   formatError, formatSuccess 
-} from '../../../platform/infra/cli-presentation/output'
-import { CliErrorCode } from '../../../platform/infra/cli-presentation/error-codes'
-import { isValidComponentType } from '../../../platform/infra/cli-presentation/component-types'
-import { withGraphBuilder } from '../../../platform/infra/graph-persistence/builder-graph-loader'
+} from '../../../platform/infra/cli/presentation/output'
+import { CliErrorCode } from '../../../platform/infra/cli/presentation/error-codes'
+import { isValidComponentType } from '../../../platform/infra/cli/input/component-types'
+import type { ComponentChecklist } from '../commands/component-checklist'
 
 interface ComponentChecklistOptions {
   graph?: string
@@ -13,7 +13,8 @@ interface ComponentChecklistOptions {
   type?: string
 }
 
-export function createComponentChecklistCommand(): Command {
+/** @riviere-role cli-entrypoint */
+export function createComponentChecklistCommand(componentChecklist: ComponentChecklist): Command {
   return new Command('component-checklist')
     .description('List components as a checklist for linking/enrichment')
     .addHelpText(
@@ -42,30 +43,34 @@ Examples:
         return
       }
 
-      await withGraphBuilder(options.graph, async (builder) => {
-        const allComponents = builder.query().components()
-        const filteredComponents =
-          options.type === undefined
-            ? allComponents
-            : allComponents.filter((c) => c.type === options.type)
-
-        const checklistItems = filteredComponents.map((c) => ({
-          id: c.id,
-          type: c.type,
-          name: c.name,
-          domain: c.domain,
-        }))
-
-        if (options.json === true) {
-          console.log(
-            JSON.stringify(
-              formatSuccess({
-                total: checklistItems.length,
-                components: checklistItems,
-              }),
-            ),
-          )
-        }
+      const result = componentChecklist.execute({
+        graphPathOption: options.graph,
+        type: options.type,
       })
+      if (!result.success) {
+        console.log(
+          JSON.stringify(
+            formatError(
+              result.code === 'GRAPH_NOT_FOUND'
+                ? CliErrorCode.GraphNotFound
+                : CliErrorCode.GraphCorrupted,
+              result.message,
+              [],
+            ),
+          ),
+        )
+        return
+      }
+
+      if (options.json === true) {
+        console.log(
+          JSON.stringify(
+            formatSuccess({
+              components: result.components,
+              total: result.total,
+            }),
+          ),
+        )
+      }
     })
 }
