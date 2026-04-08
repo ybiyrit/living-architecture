@@ -3,59 +3,55 @@ import {
 } from 'vitest'
 import {
   validateExtractionConfig,
-  type DetectionRule,
-  type InClassWithPredicate,
-  type HasDecoratorPredicate,
+  type ComponentRule,
 } from '@living-architecture/riviere-extract-config'
 import {
   loadDefaultConfig, getFirstModule, TestAssertionError 
 } from './default-config-fixtures'
 
-function hasProperty<T extends string>(
-  obj: unknown,
-  ...properties: T[]
-): obj is Record<T, unknown> {
-  return typeof obj === 'object' && obj !== null && properties.every((prop) => prop in obj)
-}
-
-function isDetectionRule(rule: unknown): rule is DetectionRule {
-  return hasProperty(rule, 'find', 'where')
-}
-
-function isInClassWithPredicate(predicate: unknown): predicate is InClassWithPredicate {
-  return hasProperty(predicate, 'inClassWith')
-}
-
-function isHasDecoratorPredicate(predicate: unknown): predicate is HasDecoratorPredicate {
-  return hasProperty(predicate, 'hasDecorator')
-}
-
-function assertContainerDecorator(rule: unknown, expectedDecorator: string): void {
-  if (!isDetectionRule(rule)) {
-    throw new TestAssertionError('Expected DetectionRule')
+function narrowToDetectionRule(rule: ComponentRule | undefined) {
+  if (!rule) {
+    throw new TestAssertionError('Expected ComponentRule, got undefined')
   }
-  if (!isInClassWithPredicate(rule.where)) {
+  if (!('find' in rule)) {
+    throw new TestAssertionError('Expected DetectionRule, got NotUsed')
+  }
+  return rule
+}
+
+function assertContainerDecorator(
+  rule: ComponentRule | undefined,
+  expectedDecorator: string,
+): void {
+  const detection = narrowToDetectionRule(rule)
+  if (!('inClassWith' in detection.where)) {
     throw new TestAssertionError('Expected InClassWithPredicate')
   }
-  if (!isHasDecoratorPredicate(rule.where.inClassWith)) {
+  if (!('hasDecorator' in detection.where.inClassWith)) {
     throw new TestAssertionError('Expected HasDecoratorPredicate')
   }
 
-  expect(rule.where.inClassWith.hasDecorator).toStrictEqual({
+  expect(detection.where.inClassWith.hasDecorator).toStrictEqual({
     name: expectedDecorator,
     from: '@living-architecture/riviere-extract-conventions',
   })
 }
 
-function assertDirectDecorator(rule: unknown, expectedDecorator: string): void {
-  if (!isDetectionRule(rule)) {
-    throw new TestAssertionError('Expected DetectionRule')
-  }
-  if (!isHasDecoratorPredicate(rule.where)) {
+function assertExtractionConfig(
+  rule: ComponentRule | undefined,
+  expectedExtract: Record<string, unknown>,
+): void {
+  const detection = narrowToDetectionRule(rule)
+  expect(detection.extract).toStrictEqual(expectedExtract)
+}
+
+function assertDirectDecorator(rule: ComponentRule | undefined, expectedDecorator: string): void {
+  const detection = narrowToDetectionRule(rule)
+  if (!('hasDecorator' in detection.where)) {
     throw new TestAssertionError('Expected HasDecoratorPredicate')
   }
 
-  expect(rule.where.hasDecorator).toStrictEqual({
+  expect(detection.where.hasDecorator).toStrictEqual({
     name: expectedDecorator,
     from: '@living-architecture/riviere-extract-conventions',
   })
@@ -70,13 +66,14 @@ describe('Default extraction config', () => {
     expect(result.valid).toBe(true)
   })
 
-  it('declares all 6 required component types', () => {
+  it('declares all 7 required component types', () => {
     const config = loadDefaultConfig()
     const module = getFirstModule(config)
 
     const requiredKeys = [
       'name',
       'path',
+      'glob',
       'api',
       'useCase',
       'domainOp',
@@ -149,6 +146,22 @@ describe('Default extraction config', () => {
         assertContainerDecorator(module[componentType], decoratorName)
       },
     )
+  })
+
+  describe('Extraction rules', () => {
+    it('eventHandler extracts subscribedEvents from instance property', () => {
+      const config = loadDefaultConfig()
+      const module = getFirstModule(config)
+
+      assertExtractionConfig(module.eventHandler, {
+        subscribedEvents: {
+          fromProperty: {
+            name: 'subscribedEvents',
+            kind: 'instance',
+          },
+        },
+      })
+    })
   })
 
   describe('Direct decorators', () => {

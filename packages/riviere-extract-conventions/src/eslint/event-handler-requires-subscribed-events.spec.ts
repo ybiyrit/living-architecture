@@ -18,16 +18,18 @@ const missingSubscribedEventsError = (className: string) => ({
 const subscribedEventsNotLiteralArrayError = () => ({messageId: 'subscribedEventsNotLiteralArray' as const,})
 
 describe('event-handler-requires-subscribed-events', () => {
-  it('is a valid ESLint rule', () => {
-    expect(rule).toBeDefined()
+  it('exports a valid ESLint rule object', () => {
+    expect(rule).toHaveProperty('meta')
+    expect(rule).toHaveProperty('create')
   })
 
   ruleTester.run('event-handler-requires-subscribed-events', rule, {
     valid: [
       {
-        name: 'passes when class has subscribedEvents with literal array',
+        name: 'passes when decorated class has subscribedEvents with literal array',
         code: `
-          class OrderHandler implements EventHandlerDef {
+          @EventHandlerContainer
+          class OrderHandler {
             readonly subscribedEvents = ['OrderPlaced', 'OrderCancelled']
             handle() {}
           }
@@ -36,7 +38,8 @@ describe('event-handler-requires-subscribed-events', () => {
       {
         name: 'passes with single element array',
         code: `
-          class OrderHandler implements EventHandlerDef {
+          @EventHandlerContainer
+          class OrderHandler {
             readonly subscribedEvents = ['OrderPlaced']
             handle() {}
           }
@@ -45,26 +48,37 @@ describe('event-handler-requires-subscribed-events', () => {
       {
         name: 'passes with empty array',
         code: `
-          class OrderHandler implements EventHandlerDef {
+          @EventHandlerContainer
+          class OrderHandler {
             readonly subscribedEvents = []
             handle() {}
           }
         `,
       },
       {
-        name: 'ignores classes not implementing EventHandlerDef',
+        name: 'ignores classes without EventHandlerContainer decorator',
         code: `
           class SomeOtherClass {
             readonly subscribedEvents = EVENTS
           }
         `,
       },
+      {
+        name: 'ignores classes with different decorators',
+        code: `
+          @APIContainer
+          class SomeController {
+            readonly route = '/orders'
+          }
+        `,
+      },
     ],
     invalid: [
       {
-        name: 'reports error when subscribedEvents property is missing',
+        name: 'reports error when subscribedEvents property is missing from decorated class',
         code: `
-          class OrderHandler implements EventHandlerDef {
+          @EventHandlerContainer
+          class OrderHandler {
             handle() {}
           }
         `,
@@ -73,7 +87,8 @@ describe('event-handler-requires-subscribed-events', () => {
       {
         name: 'reports error when subscribedEvents is not an array (string)',
         code: `
-          class OrderHandler implements EventHandlerDef {
+          @EventHandlerContainer
+          class OrderHandler {
             readonly subscribedEvents = 'OrderPlaced'
             handle() {}
           }
@@ -84,8 +99,31 @@ describe('event-handler-requires-subscribed-events', () => {
         name: 'reports error when subscribedEvents array contains variable reference',
         code: `
           const EVENT = 'OrderPlaced'
-          class OrderHandler implements EventHandlerDef {
+          @EventHandlerContainer
+          class OrderHandler {
             readonly subscribedEvents = [EVENT]
+            handle() {}
+          }
+        `,
+        errors: [subscribedEventsNotLiteralArrayError()],
+      },
+      {
+        name: 'reports error when subscribedEvents array contains non-string literals',
+        code: `
+          @EventHandlerContainer
+          class OrderHandler {
+            readonly subscribedEvents = [42, true]
+            handle() {}
+          }
+        `,
+        errors: [subscribedEventsNotLiteralArrayError()],
+      },
+      {
+        name: 'reports error when subscribedEvents array mixes strings and numbers',
+        code: `
+          @EventHandlerContainer
+          class OrderHandler {
+            readonly subscribedEvents = ['OrderPlaced', 42]
             handle() {}
           }
         `,
@@ -95,7 +133,8 @@ describe('event-handler-requires-subscribed-events', () => {
         name: 'reports error when subscribedEvents is a variable reference',
         code: `
           const EVENTS = ['OrderPlaced']
-          class OrderHandler implements EventHandlerDef {
+          @EventHandlerContainer
+          class OrderHandler {
             readonly subscribedEvents = EVENTS
             handle() {}
           }

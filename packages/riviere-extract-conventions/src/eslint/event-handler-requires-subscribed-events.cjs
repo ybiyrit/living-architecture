@@ -1,26 +1,26 @@
 const {
-  implementsInterface,
+  hasDecorator,
   findInstanceProperty,
-  hasLiteralArrayValue,
+  hasStringLiteralArrayValue,
   getValueTypeDescription,
 } = require('./interface-ast-predicates.cjs')
 
 module.exports = {
   meta: {
     type: 'problem',
-    docs: { description: 'Require EventHandlerDef implementations to have subscribedEvents array with literal values' },
+    docs: { description: 'Require @EventHandlerContainer classes to have subscribedEvents array with literal values' },
     schema: [],
     messages: {
-      missingSubscribedEvents: "Class '{{className}}' implements EventHandlerDef but is missing 'subscribedEvents' property",
+      missingSubscribedEvents: "Class '{{className}}' has @EventHandlerContainer but is missing 'subscribedEvents' property",
       subscribedEventsNotLiteralArray: "Class '{{className}}' has 'subscribedEvents' property but value must be an array of string literals, not {{actualType}}",
     },
   },
   create(context) {
     return {
       ClassDeclaration(node) {
-        /* v8 ignore next -- ClassDeclaration always has id (name) */
+        /* v8 ignore next -- ESLint ClassDeclaration visitor guarantees node.id exists per estree spec; structurally unreachable */
         if (!node.id) return
-        if (!implementsInterface(node, 'EventHandlerDef')) return
+        if (!hasDecorator(node, 'EventHandlerContainer')) return
 
         const className = node.id.name
         const subscribedEventsProperty = findInstanceProperty(node, 'subscribedEvents')
@@ -31,7 +31,7 @@ module.exports = {
             messageId: 'missingSubscribedEvents',
             data: { className },
           })
-        } else if (!hasLiteralArrayValue(subscribedEventsProperty)) {
+        } else if (!hasStringLiteralArrayValue(subscribedEventsProperty)) {
           context.report({
             node: subscribedEventsProperty,
             messageId: 'subscribedEventsNotLiteralArray',

@@ -1,24 +1,12 @@
-/**
- * Shared utilities for ESLint rules that check interface implementations.
- */
-
-/**
- * Checks if a class implements a specific interface by name.
- * @param {object} node - ClassDeclaration AST node
- * @param {string} interfaceName - Name of interface to check
- * @returns {boolean} True if class implements the interface
- */
 function implementsInterface(node, interfaceName) {
   if (!node.implements || node.implements.length === 0) {
     return false
   }
   return node.implements.some((impl) => {
-    // Handle simple identifier: implements APIControllerDef
     if (impl.expression && impl.expression.type === 'Identifier') {
       return impl.expression.name === interfaceName
     }
-    // Handle qualified name: implements SomeModule.APIControllerDef
-    /* v8 ignore next 4 -- defensive check: implements array always has expression */
+    /* v8 ignore next 4 -- TSQualifiedName branch requires qualified module syntax (SomeModule.Interface) which no current rule uses; keeping for completeness since the ESLint AST spec allows it */
     if (impl.expression && impl.expression.type === 'TSQualifiedName') {
       return impl.expression.right.name === interfaceName
     }
@@ -26,14 +14,17 @@ function implementsInterface(node, interfaceName) {
   })
 }
 
-/**
- * Finds an instance property (non-static) by name in class body.
- * @param {object} classNode - ClassDeclaration AST node
- * @param {string} propertyName - Name of property to find
- * @returns {object|null} PropertyDefinition node or null
- */
+function hasDecorator(node, decoratorName) {
+  if (!node.decorators || node.decorators.length === 0) {
+    return false
+  }
+  return node.decorators.some(
+    (d) => d.expression.type === 'Identifier' && d.expression.name === decoratorName,
+  )
+}
+
 function findInstanceProperty(classNode, propertyName) {
-  /* v8 ignore next 3 -- defensive check: ClassDeclaration always has body in practice */
+  /* v8 ignore next 3 -- ESLint guarantees ClassDeclaration.body exists per estree spec; structurally unreachable */
   if (!classNode.body || !classNode.body.body) {
     return null
   }
@@ -48,40 +39,16 @@ function findInstanceProperty(classNode, propertyName) {
   }) || null
 }
 
-/**
- * Checks if a property has a literal value (string, number, boolean).
- * @param {object} property - PropertyDefinition AST node
- * @returns {boolean} True if value is a literal
- */
-/* v8 ignore start -- exported utility for consumers, not used internally */
-function hasLiteralValue(property) {
-  if (!property || !property.value) {
-    return false
-  }
-  return property.value.type === 'Literal'
-}
-/* v8 ignore stop */
-
-/**
- * Checks if a property has a string literal value specifically.
- * @param {object} property - PropertyDefinition AST node
- * @returns {boolean} True if value is a string literal
- */
 function hasStringLiteralValue(property) {
-  /* v8 ignore next 3 -- defensive check: rules always check property existence first */
+  /* v8 ignore next 3 -- callers (api-controller, ui-page rules) always guard with findInstanceProperty before calling; null property is structurally unreachable in current call sites */
   if (!property || !property.value) {
     return false
   }
   return property.value.type === 'Literal' && typeof property.value.value === 'string'
 }
 
-/**
- * Checks if a property has an array literal value with only literal elements.
- * @param {object} property - PropertyDefinition AST node
- * @returns {boolean} True if value is an array of literals
- */
-function hasLiteralArrayValue(property) {
-  /* v8 ignore next 3 -- defensive check: rules always check property existence first */
+function hasStringLiteralArrayValue(property) {
+  /* v8 ignore next 3 -- callers always guard with findInstanceProperty before calling; null property is structurally unreachable in current call sites */
   if (!property || !property.value) {
     return false
   }
@@ -89,30 +56,20 @@ function hasLiteralArrayValue(property) {
     return false
   }
   return property.value.elements.every(
-    (element) => element && element.type === 'Literal'
+    (element) => element && element.type === 'Literal' && typeof element.value === 'string'
   )
 }
 
-/**
- * Gets the literal value from a property, or null if not a literal.
- * @param {object} property - PropertyDefinition AST node
- * @returns {*} The literal value or null
- */
 function getLiteralValue(property) {
-  /* v8 ignore next 3 -- defensive check: rules always check property existence first */
+  /* v8 ignore next 3 -- callers always guard with hasStringLiteralValue before calling; non-literal property is structurally unreachable in current call sites */
   if (!property || !property.value || property.value.type !== 'Literal') {
     return null
   }
   return property.value.value
 }
 
-/**
- * Gets a human-readable type description for error messages.
- * @param {object} property - PropertyDefinition AST node
- * @returns {string} Type description
- */
 function getValueTypeDescription(property) {
-  /* v8 ignore next 3 -- defensive check: only called when property exists */
+  /* v8 ignore next 3 -- callers always guard with findInstanceProperty before calling; null property is structurally unreachable in current call sites */
   if (!property || !property.value) {
     return 'undefined'
   }
@@ -134,10 +91,10 @@ function getValueTypeDescription(property) {
 
 module.exports = {
   implementsInterface,
+  hasDecorator,
   findInstanceProperty,
-  hasLiteralValue,
   hasStringLiteralValue,
-  hasLiteralArrayValue,
+  hasStringLiteralArrayValue,
   getLiteralValue,
   getValueTypeDescription,
 }
