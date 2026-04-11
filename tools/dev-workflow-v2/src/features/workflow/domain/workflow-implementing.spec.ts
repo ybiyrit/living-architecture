@@ -18,18 +18,20 @@ describe('Workflow', () => {
 
   describe('startSession', () => {
     it('appends session-started event with repository', () => {
-      const { events } = spec.given().when((wf) => wf.startSession(undefined, 'owner/repo'))
+      const { events } = spec.given().when((wf) => wf.startSession('', 'owner/repo'))
       expect(events).toHaveLength(1)
       expect(events[0]).toMatchObject({
         type: 'session-started',
         repository: 'owner/repo',
+        transcriptPath: '',
       })
     })
 
     it('appends session-started event without repository when undefined', () => {
-      const { events } = spec.given().when((wf) => wf.startSession(undefined, undefined))
+      const { events } = spec.given().when((wf) => wf.startSession('', undefined))
       expect(events).toHaveLength(1)
       expect(events[0]).not.toHaveProperty('repository')
+      expect(events[0]).toHaveProperty('transcriptPath', '')
     })
   })
 
@@ -37,6 +39,43 @@ describe('Workflow', () => {
     it('returns path from registry agentInstructions field', () => {
       const { result } = spec.given().when((wf) => wf.getAgentInstructions('/plugin'))
       expect(result).toBe('/plugin/states/implementing.md')
+    })
+  })
+
+  describe('getTranscriptPath', () => {
+    it('throws when session has not been started', () => {
+      const wf = Workflow.createFresh(makeDeps())
+      expect(() => wf.getTranscriptPath()).toThrow(
+        'Transcript path not set. Session has not been started.',
+      )
+    })
+
+    it('returns transcript path after session started', () => {
+      const { result } = spec.given().when((wf) => {
+        wf.startSession('some/path', undefined)
+        return wf.getTranscriptPath()
+      })
+      expect(result).toBe('some/path')
+    })
+  })
+
+  describe('registerAgent', () => {
+    it('returns pass (no-op for single-agent workflow)', () => {
+      const {
+        result, events 
+      } = spec.given().when((wf) => wf.registerAgent('lead', 'agent-1'))
+      expect(result).toStrictEqual({ pass: true })
+      expect(events).toHaveLength(0)
+    })
+  })
+
+  describe('handleTeammateIdle', () => {
+    it('returns pass (no-op for single-agent workflow)', () => {
+      const {
+        result, events 
+      } = spec.given().when((wf) => wf.handleTeammateIdle('agent-1'))
+      expect(result).toStrictEqual({ pass: true })
+      expect(events).toHaveLength(0)
     })
   })
 

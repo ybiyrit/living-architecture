@@ -10,12 +10,12 @@ import {
   Workflow, type WorkflowDeps 
 } from '../../domain/workflow'
 import {
-  INITIAL_STATE, parseStateName 
+  INITIAL_STATE, STATE_NAME_SCHEMA 
 } from '../../domain/workflow-types'
 import {
   getOperationBody, getTransitionTitle 
 } from '../../domain/output-messages'
-import { applyEvents } from '../../domain/fold'
+import { applyEvent } from '../../domain/fold'
 import { WORKFLOW_EVENT_SCHEMA } from '../../domain/workflow-events'
 import { WORKFLOW_REGISTRY } from '../../domain/registry'
 
@@ -41,25 +41,25 @@ export const WORKFLOW_DEFINITION: WorkflowDefinition<
   StateName,
   WorkflowOperation
 > = {
-  createFresh(deps: WorkflowDeps): Workflow {
-    return Workflow.createFresh(deps)
-  },
-  rehydrate(events: readonly BaseEvent[], deps: WorkflowDeps): Workflow {
-    const workflowEvents = events.map((e) => {
-      const result = WORKFLOW_EVENT_SCHEMA.safeParse(e)
-      if (!result.success) {
+  fold(state: WorkflowState, event: BaseEvent): WorkflowState {
+    const knownTypes: Set<string> = new Set(
+      WORKFLOW_EVENT_SCHEMA.options.map((s) => s.shape.type.value),
+    )
+    const result = WORKFLOW_EVENT_SCHEMA.safeParse(event)
+    if (!result.success) {
+      if (knownTypes.has(event.type)) {
         throw new WorkflowStateError(
-          `Unknown event type in store: "${e.type}". Event store may be corrupted or from a newer version.`,
+          `Malformed workflow event "${event.type}": ${result.error.message}`,
         )
       }
-      return result.data
-    })
-    const state = applyEvents(workflowEvents)
+      return state
+    }
+    return applyEvent(state, result.data)
+  },
+  buildWorkflow(state: WorkflowState, deps: WorkflowDeps): Workflow {
     return Workflow.rehydrate(state, deps)
   },
-  procedurePath(state: StateName, pluginRoot: string): string {
-    return Workflow.procedurePath(state, pluginRoot)
-  },
+  stateSchema: STATE_NAME_SCHEMA,
   initialState(): typeof INITIAL_STATE {
     return INITIAL_STATE
   },
@@ -96,7 +96,6 @@ export const WORKFLOW_DEFINITION: WorkflowDefinition<
     }
     return event
   },
-  parseStateName,
   getOperationBody(op) {
     return getOperationBody(op)
   },

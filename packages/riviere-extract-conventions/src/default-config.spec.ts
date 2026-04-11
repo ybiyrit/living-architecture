@@ -6,7 +6,10 @@ import {
   type ComponentRule,
 } from '@living-architecture/riviere-extract-config'
 import {
-  loadDefaultConfig, getFirstModule, TestAssertionError 
+  loadDefaultConfig,
+  getFirstModule,
+  getValidatedConfig,
+  TestAssertionError,
 } from './default-config-fixtures'
 
 function narrowToDetectionRule(rule: ComponentRule | undefined) {
@@ -66,7 +69,7 @@ describe('Default extraction config', () => {
     expect(result.valid).toBe(true)
   })
 
-  it('declares all 7 required component types', () => {
+  it('declares all 6 required component types and eventPublisher customType', () => {
     const config = loadDefaultConfig()
     const module = getFirstModule(config)
 
@@ -79,12 +82,13 @@ describe('Default extraction config', () => {
       'domainOp',
       'event',
       'eventHandler',
-      'eventPublisher',
       'ui',
+      'customTypes',
     ]
     const moduleKeys = Object.keys(module)
     expect(moduleKeys).toStrictEqual(expect.arrayContaining(requiredKeys))
     expect(moduleKeys).toHaveLength(10)
+    expect(module.customTypes).toHaveProperty('eventPublisher')
   })
 
   it.each([
@@ -146,6 +150,17 @@ describe('Default extraction config', () => {
         assertContainerDecorator(module[componentType], decoratorName)
       },
     )
+  })
+
+  it('configures eventPublishers connection detection for the eventPublisher customType', () => {
+    const config = getValidatedConfig(loadDefaultConfig())
+
+    expect(config.connections?.eventPublishers).toStrictEqual([
+      {
+        fromType: 'eventPublisher',
+        metadataKey: 'publishedEventType',
+      },
+    ])
   })
 
   describe('Extraction rules', () => {

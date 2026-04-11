@@ -49,10 +49,9 @@ A module defines extraction rules for a path pattern
 | `domainOp` | `componentRule` | No | Detection rule for DomainOp components |
 | `event` | `componentRule` | No | Detection rule for Event components |
 | `eventHandler` | `componentRule` | No | Detection rule for EventHandler components |
-| `eventPublisher` | `componentRule` | No | Detection rule for EventPublisher components |
 | `ui` | `componentRule` | No | Detection rule for UI components |
 | `customTypes` | `Record<string, detectionRule>` | No | User-defined component types with their detection rules |
-| `connections` | `connectionsConfig` | No | Module-level connection detection patterns additive to global |
+| `connections` | `moduleConnectionsConfig` | No | Module-level connection detection patterns additive to global |
 
 ---
 
@@ -284,7 +283,33 @@ Connection detection configuration with pattern definitions
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `patterns` | `connectionPattern[]` | **Yes** | Connection detection patterns |
+| `patterns` | `connectionPattern[]` | No | Connection detection patterns |
+| `eventPublishers` | `eventPublisherConfig[]` | No | Declares which custom component types publish events and how to detect the connections |
+
+---
+
+### `moduleConnectionsConfig`
+
+Module-level connection detection configuration (patterns only — eventPublishers is top-level only)
+
+**Properties:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `patterns` | `connectionPattern[]` | No | Connection detection patterns |
+
+---
+
+### `eventPublisherConfig`
+
+Declares a custom component type as an event publisher
+
+**Properties:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `fromType` | `string` | **Yes** | The custom component type name — must be defined in customTypes in at least one module |
+| `metadataKey` | `string` | **Yes** | The metadata key on this component type that holds the published event type name |
 
 ---
 

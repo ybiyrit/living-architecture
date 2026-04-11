@@ -25,18 +25,8 @@ function applyTransitioned(
   }
 }
 
-function applyRecordingEvent(state: WorkflowState, event: WorkflowEvent): WorkflowState {
+function applyReviewEvent(state: WorkflowState, event: WorkflowEvent): WorkflowState | undefined {
   switch (event.type) {
-    case 'issue-recorded':
-      return {
-        ...state,
-        githubIssue: event.issueNumber,
-      }
-    case 'branch-recorded':
-      return {
-        ...state,
-        featureBranch: event.branch,
-      }
     case 'architecture-review-completed':
       return {
         ...state,
@@ -51,12 +41,6 @@ function applyRecordingEvent(state: WorkflowState, event: WorkflowEvent): Workfl
       return {
         ...state,
         bugScannerPassed: event.passed,
-      }
-    case 'pr-recorded':
-      return {
-        ...state,
-        prNumber: event.prNumber,
-        prUrl: event.prUrl,
       }
     case 'ci-completed':
       return {
@@ -75,6 +59,29 @@ function applyRecordingEvent(state: WorkflowState, event: WorkflowEvent): Workfl
         feedbackAddressed: true,
         feedbackAddressedCount: event.addressedCount,
       }
+  }
+}
+
+function applyRecordingEvent(state: WorkflowState, event: WorkflowEvent): WorkflowState {
+  const reviewResult = applyReviewEvent(state, event)
+  if (reviewResult !== undefined) return reviewResult
+  switch (event.type) {
+    case 'issue-recorded':
+      return {
+        ...state,
+        githubIssue: event.issueNumber,
+      }
+    case 'branch-recorded':
+      return {
+        ...state,
+        featureBranch: event.branch,
+      }
+    case 'pr-recorded':
+      return {
+        ...state,
+        prNumber: event.prNumber,
+        prUrl: event.prUrl,
+      }
     case 'reflection-written':
       return {
         ...state,
@@ -84,6 +91,11 @@ function applyRecordingEvent(state: WorkflowState, event: WorkflowEvent): Workfl
       return {
         ...state,
         taskCheckPassed: true,
+      }
+    case 'session-started':
+      return {
+        ...state,
+        ...(event.transcriptPath === undefined ? {} : { transcriptPath: event.transcriptPath }),
       }
     default:
       return state

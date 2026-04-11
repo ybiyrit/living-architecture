@@ -5,6 +5,7 @@ import type {
   ComponentType,
   ExtractionConfig,
   ModuleConfig,
+  ConnectionsConfig,
 } from './extraction-config-schema'
 import rawSchema from '../extraction-config.schema.json' with { type: 'json' }
 
@@ -16,7 +17,6 @@ const REQUIRED_FIELDS: Record<ComponentType, string[]> = {
   api: ['apiType'],
   event: ['eventName'],
   eventHandler: ['subscribedEvents'],
-  eventPublisher: [],
   domainOp: ['operationName'],
   ui: ['route'],
   useCase: [],
@@ -28,7 +28,6 @@ const COMPONENT_TYPES: ComponentType[] = [
   'domainOp',
   'event',
   'eventHandler',
-  'eventPublisher',
   'ui',
 ]
 
@@ -156,6 +155,64 @@ function validateAllExtractionRules(config: ExtractionConfig): ValidationError[]
   })
 }
 
+function collectCustomTypeExtractedFields(config: ExtractionConfig): Map<string, Set<string>> {
+  const fieldsByType = new Map<string, Set<string>>()
+  for (const module of config.modules) {
+    if ('$ref' in module || module.customTypes === undefined) {
+      continue
+    }
+    for (const [typeName, rule] of Object.entries(module.customTypes)) {
+      const existing = fieldsByType.get(typeName) ?? new Set<string>()
+      for (const key of Object.keys(rule.extract ?? {})) {
+        existing.add(key)
+      }
+      fieldsByType.set(typeName, existing)
+    }
+  }
+  return fieldsByType
+}
+
+function validateEventPublishers(
+  connections: ConnectionsConfig,
+  customTypeFields: Map<string, Set<string>>,
+): ValidationError[] {
+  if (connections.eventPublishers === undefined) {
+    return []
+  }
+  return connections.eventPublishers.flatMap((publisher, index) => {
+    const extractedFields = customTypeFields.get(publisher.fromType)
+    if (extractedFields === undefined) {
+      return [
+        {
+          path: `/connections/eventPublishers/${index}/fromType`,
+          message:
+            `"${publisher.fromType}" is not defined as a customType in any module. ` +
+            `Add a customType named "${publisher.fromType}" to at least one module.`,
+        },
+      ]
+    }
+    if (!extractedFields.has(publisher.metadataKey)) {
+      return [
+        {
+          path: `/connections/eventPublishers/${index}/fromType`,
+          message:
+            `customType "${publisher.fromType}" does not extract "${publisher.metadataKey}". ` +
+            `Add extract["${publisher.metadataKey}"] to that custom type.`,
+        },
+      ]
+    }
+    return []
+  })
+}
+
+function validateConnectionsConfig(config: ExtractionConfig): ValidationError[] {
+  if (config.connections === undefined) {
+    return []
+  }
+  const customTypeFields = collectCustomTypeExtractedFields(config)
+  return validateEventPublishers(config.connections, customTypeFields)
+}
+
 /**
  * Validates data against the ExtractionConfig JSON Schema only.
  * Does NOT check semantic rules like required extraction fields.
@@ -193,7 +250,7 @@ export function validateExtractionConfig(data: unknown): ValidationResult {
   }
 
   // data is now narrowed to ExtractionConfig
-  const semanticErrors = validateAllExtractionRules(data)
+  const semanticErrors = [...validateAllExtractionRules(data), ...validateConnectionsConfig(data)]
 
   if (semanticErrors.length > 0) {
     return {
@@ -224,9 +281,9 @@ export function formatValidationErrors(errors: ValidationError[]): string {
  * @throws ExtractionConfigValidationError if validation fails.
  */
 export function parseExtractionConfig(data: unknown): ExtractionConfig {
-  if (isValidExtractionConfig(data)) {
+  const result = validateExtractionConfig(data)
+  if (result.valid && isValidExtractionConfig(data)) {
     return data
   }
-  const result = validateExtractionConfig(data)
   throw new ExtractionConfigValidationError(result.errors)
 }
