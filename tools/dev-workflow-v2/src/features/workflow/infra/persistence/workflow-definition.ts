@@ -70,11 +70,9 @@ export const WORKFLOW_DEFINITION: WorkflowDefinition<
     to: StateName,
     deps: WorkflowDeps,
   ): TransitionContext<WorkflowState, StateName> {
-    const prChecksPass = state.prNumber === undefined ? false : deps.checkPrChecks(state.prNumber)
     return {
       state,
       gitInfo: deps.getGitInfo(),
-      prChecksPass,
       from,
       to,
     }

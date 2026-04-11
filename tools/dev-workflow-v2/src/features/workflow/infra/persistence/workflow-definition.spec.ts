@@ -15,7 +15,6 @@ function makeWorkflowDeps(): WorkflowDeps {
       changedFilesVsDefault: [],
       hasCommitsVsDefault: false,
     }),
-    checkPrChecks: () => true,
     getPrFeedback: () => ({
       unresolvedCount: 0,
       threads: [],
@@ -141,49 +140,6 @@ describe('WORKFLOW_DEFINITION', () => {
       expect(ctx.state).toBe(state)
       expect(ctx.from).toStrictEqual('IMPLEMENTING')
       expect(ctx.to).toStrictEqual('REVIEWING')
-    })
-
-    it('sets prChecksPass from deps when prNumber exists', () => {
-      const state: WorkflowState = {
-        currentStateMachineState: 'IMPLEMENTING',
-        architectureReviewPassed: false,
-        codeReviewPassed: false,
-        bugScannerPassed: false,
-        taskCheckPassed: false,
-        ciPassed: false,
-        feedbackClean: false,
-        feedbackAddressed: false,
-        prNumber: 42,
-      }
-      const deps = makeWorkflowDeps()
-      const ctx = WORKFLOW_DEFINITION.buildTransitionContext(
-        state,
-        'IMPLEMENTING',
-        'REVIEWING',
-        deps,
-      )
-      expect(ctx.prChecksPass).toStrictEqual(true)
-    })
-
-    it('sets prChecksPass to false when no prNumber', () => {
-      const state: WorkflowState = {
-        currentStateMachineState: 'IMPLEMENTING',
-        architectureReviewPassed: false,
-        codeReviewPassed: false,
-        bugScannerPassed: false,
-        taskCheckPassed: false,
-        ciPassed: false,
-        feedbackClean: false,
-        feedbackAddressed: false,
-      }
-      const deps = makeWorkflowDeps()
-      const ctx = WORKFLOW_DEFINITION.buildTransitionContext(
-        state,
-        'IMPLEMENTING',
-        'REVIEWING',
-        deps,
-      )
-      expect(ctx.prChecksPass).toStrictEqual(false)
     })
   })
 
