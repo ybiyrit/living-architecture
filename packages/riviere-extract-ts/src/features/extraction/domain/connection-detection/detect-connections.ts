@@ -80,6 +80,7 @@ export function stripHttpCallComponents(
 
 /** @riviere-role value-object */
 export interface PerModuleConnectionOptions {
+  allComponents?: readonly EnrichedComponent[]
   allowIncomplete?: boolean
   moduleGlobs: string[]
   patterns?: ConnectionPattern[]
@@ -108,7 +109,8 @@ export function detectPerModuleConnections(
   globMatcher: GlobMatcher,
 ): PerModuleDetectionResult {
   const setupStart = performance.now()
-  const componentIndex = new ComponentIndex(components)
+  const visibleComponents = options.allComponents ?? components
+  const componentIndex = new ComponentIndex(visibleComponents)
   const sourceFilePaths = computeFilteredFilePaths(project, options.moduleGlobs, globMatcher)
   const setupMs = performance.now() - setupStart
 
@@ -135,7 +137,7 @@ export function detectPerModuleConnections(
     repository,
   )
 
-  const rewritten = rewriteHttpCallLinks([...syncLinks, ...configurableLinks], components)
+  const rewritten = rewriteHttpCallLinks([...syncLinks, ...configurableLinks], visibleComponents)
 
   return {
     links: rewritten.links,

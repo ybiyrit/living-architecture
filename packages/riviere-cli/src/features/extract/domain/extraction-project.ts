@@ -76,7 +76,7 @@ export class ExtractionProject {
     if (!options.includeConnections) {
       return {
         kind: 'draftOnly',
-        components: draftComponents,
+        components: stripDraftHttpCallComponents(draftComponents),
       }
     }
 
@@ -105,7 +105,7 @@ export class ExtractionProject {
     if (!options.includeConnections) {
       return {
         kind: 'draftOnly',
-        components: this.draftComponents,
+        components: stripDraftHttpCallComponents(this.draftComponents),
       }
     }
 
@@ -158,8 +158,10 @@ export class ExtractionProject {
         moduleContext.project,
         moduleComponents,
         {
+          allComponents: enrichedComponents,
           allowIncomplete,
           moduleGlobs: [posix.join(moduleContext.module.path, moduleContext.module.glob)],
+          patterns: this.resolvedConfig.connections?.patterns,
           repository: this.repositoryName,
         },
         matchesGlob,
@@ -241,6 +243,10 @@ export class ExtractionProject {
       failedFields,
     }
   }
+}
+
+function stripDraftHttpCallComponents(components: DraftComponent[]): DraftComponent[] {
+  return components.filter((component) => component.type !== 'httpCall')
 }
 
 function assertAllDraftsMatchModules(

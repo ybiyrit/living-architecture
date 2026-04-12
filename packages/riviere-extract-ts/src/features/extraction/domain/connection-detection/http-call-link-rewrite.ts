@@ -20,12 +20,12 @@ function mapComponentsByIdentity(
   return byIdentity
 }
 
-function mapInternalComponentsByName(
+function mapInternalApiComponentsByName(
   components: readonly EnrichedComponent[],
 ): ReadonlyMap<string, readonly EnrichedComponent[]> {
   const byName = new Map<string, EnrichedComponent[]>()
   for (const component of components) {
-    if (component.type === 'httpCall') {
+    if (component.type !== 'api') {
       continue
     }
 
@@ -39,27 +39,61 @@ function mapInternalComponentsByName(
   return byName
 }
 
-function findUniqueApiComponentInDomainMatchingRoute(
+function findUniqueApiComponentMatchingRoute(
   components: readonly EnrichedComponent[],
-  domainName: string,
   route: string | undefined,
+  method: string | undefined,
 ): EnrichedComponent | undefined {
   if (route === undefined) {
     return undefined
   }
 
-  const matchedApiComponents = components.filter(
-    (component) =>
-      component.type === 'api' &&
-      component.domain === domainName &&
-      component.metadata['route'] === route,
+  const routeMatchedApiComponents = components.filter(
+    (component) => component.type === 'api' && component.metadata['route'] === route,
   )
 
-  if (matchedApiComponents.length !== 1) {
+  if (method === undefined) {
+    if (routeMatchedApiComponents.length !== 1) {
+      return undefined
+    }
+
+    return routeMatchedApiComponents[0]
+  }
+
+  const exactMethodMatchedApiComponents = routeMatchedApiComponents.filter(
+    (component) => component.metadata['method'] === method,
+  )
+
+  if (exactMethodMatchedApiComponents.length === 1) {
+    return exactMethodMatchedApiComponents[0]
+  }
+
+  if (exactMethodMatchedApiComponents.length > 1) {
     return undefined
   }
 
-  return matchedApiComponents[0]
+  const methodlessApiComponents = routeMatchedApiComponents.filter(
+    (component) => component.metadata['method'] === undefined,
+  )
+
+  if (routeMatchedApiComponents.length !== 1 || methodlessApiComponents.length !== 1) {
+    return undefined
+  }
+
+  return methodlessApiComponents[0]
+}
+
+function findUniqueApiComponentInDomainMatchingRoute(
+  components: readonly EnrichedComponent[],
+  domainName: string,
+  route: string | undefined,
+  method: string | undefined,
+): EnrichedComponent | undefined {
+  return findUniqueApiComponentMatchingRoute(
+    components.filter((component) => component.domain === domainName),
+    route,
+    method,
+  )
 }
 
 function parseServiceName(httpCallComponent: EnrichedComponent): string {
@@ -94,6 +128,78 @@ function parseRoute(httpCallComponent: EnrichedComponent): string | undefined {
   })
 }
 
+function parseMethod(httpCallComponent: EnrichedComponent): string | undefined {
+  const rawMethod = httpCallComponent.metadata['method']
+  if (rawMethod === undefined) {
+    return undefined
+  }
+
+  if (typeof rawMethod === 'string' && rawMethod.trim().length > 0) {
+    return rawMethod
+  }
+
+  throw new ConnectionDetectionError({
+    file: httpCallComponent.location.file,
+    line: httpCallComponent.location.line,
+    typeName: componentIdentity(httpCallComponent),
+    reason: `Expected metadata.method to be a non-empty string when provided, got ${JSON.stringify(rawMethod)}`,
+  })
+}
+
+function matchesOptionalMetadata(
+  expectedValue: string | undefined,
+  candidateValue: unknown,
+): boolean {
+  if (expectedValue === undefined) {
+    return true
+  }
+
+  if (candidateValue === undefined) {
+    return true
+  }
+
+  return candidateValue === expectedValue
+}
+
+function canUseApiNameFallback(
+  apiComponent: EnrichedComponent,
+  route: string | undefined,
+  method: string | undefined,
+): boolean {
+  return (
+    matchesOptionalMetadata(route, apiComponent.metadata['route']) &&
+    matchesOptionalMetadata(method, apiComponent.metadata['method']) &&
+    (route === undefined || apiComponent.metadata['route'] !== undefined) &&
+    (method === undefined || apiComponent.metadata['method'] !== undefined)
+  )
+}
+
+function deduplicateExtractedLinks(links: readonly ExtractedLink[]): ExtractedLink[] {
+  const byKey = new Map<string, ExtractedLink>()
+
+  for (const link of links) {
+    const key = JSON.stringify(link)
+    if (!byKey.has(key)) {
+      byKey.set(key, link)
+    }
+  }
+
+  return [...byKey.values()]
+}
+
+function deduplicateExternalLinks(links: readonly ExternalLink[]): ExternalLink[] {
+  const byKey = new Map<string, ExternalLink>()
+
+  for (const link of links) {
+    const key = JSON.stringify(link)
+    if (!byKey.has(key)) {
+      byKey.set(key, link)
+    }
+  }
+
+  return [...byKey.values()]
+}
+
 function toExternalLink(
   link: ExtractedLink,
   serviceName: string,
@@ -118,7 +224,7 @@ export function rewriteHttpCallLinks(
   const linksToKeep: ExtractedLink[] = []
   const externalLinks: ExternalLink[] = []
   const componentsByIdentity = mapComponentsByIdentity(components)
-  const internalComponentsByName = mapInternalComponentsByName(components)
+  const internalApiComponentsByName = mapInternalApiComponentsByName(components)
 
   for (const link of links) {
     const targetComponent = componentsByIdentity.get(link.target)
@@ -128,33 +234,14 @@ export function rewriteHttpCallLinks(
     }
 
     const serviceName = parseServiceName(targetComponent)
-    const matchedInternalComponents = internalComponentsByName.get(serviceName) ?? []
-    const matchedInternalCount = matchedInternalComponents.length
-    if (matchedInternalCount > 1) {
-      throw new ConnectionDetectionError({
-        file: targetComponent.location.file,
-        line: targetComponent.location.line,
-        typeName: componentIdentity(targetComponent),
-        reason: `Expected metadata.serviceName to match exactly one internal component name, got ${matchedInternalCount} matches for ${JSON.stringify(serviceName)}`,
-      })
-    }
-
-    const [uniqueInternalTarget] = matchedInternalComponents
-
-    if (uniqueInternalTarget !== undefined) {
-      linksToKeep.push({
-        ...link,
-        target: componentIdentity(uniqueInternalTarget),
-      })
-      continue
-    }
-
     const route = parseRoute(targetComponent)
+    const method = parseMethod(targetComponent)
 
     const uniqueApiTargetInDomain = findUniqueApiComponentInDomainMatchingRoute(
       components,
       serviceName,
       route,
+      method,
     )
 
     if (uniqueApiTargetInDomain !== undefined) {
@@ -165,12 +252,32 @@ export function rewriteHttpCallLinks(
       continue
     }
 
+    const matchedInternalApis = internalApiComponentsByName.get(serviceName) ?? []
+    const matchedInternalApiCount = matchedInternalApis.length
+    if (matchedInternalApiCount > 1) {
+      externalLinks.push(toExternalLink(link, serviceName, route))
+      continue
+    }
+
+    const [uniqueInternalTarget] = matchedInternalApis
+
+    if (
+      uniqueInternalTarget !== undefined &&
+      canUseApiNameFallback(uniqueInternalTarget, route, method)
+    ) {
+      linksToKeep.push({
+        ...link,
+        target: componentIdentity(uniqueInternalTarget),
+      })
+      continue
+    }
+
     externalLinks.push(toExternalLink(link, serviceName, route))
   }
 
   return {
-    links: linksToKeep,
-    externalLinks,
+    links: deduplicateExtractedLinks(linksToKeep),
+    externalLinks: deduplicateExternalLinks(externalLinks),
   }
 }
 

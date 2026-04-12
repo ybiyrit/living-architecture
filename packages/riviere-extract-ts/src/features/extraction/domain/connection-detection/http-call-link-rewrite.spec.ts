@@ -62,40 +62,7 @@ describe('rewriteHttpCallLinks', () => {
     expect(result.externalLinks).toStrictEqual([])
   })
 
-  it('keeps internal link when httpCall serviceName matches internal component name', () => {
-    const filePath = '/src/http.ts'
-    const source = buildComponent('PlaceOrder', filePath, 1)
-    const httpCall = buildComponent('check', filePath, 2, {
-      type: 'httpCall',
-      metadata: {
-        serviceName: 'FraudGateway',
-        route: '/api/check',
-      },
-    })
-    const internalTarget = buildComponent('FraudGateway', filePath, 3, { type: 'repository' })
-
-    const result = rewriteHttpCallLinks(
-      [
-        {
-          source: 'orders:useCase:PlaceOrder',
-          target: 'orders:httpCall:check',
-          type: 'sync',
-        },
-      ],
-      [source, httpCall, internalTarget],
-    )
-
-    expect(result.links).toStrictEqual([
-      {
-        source: 'orders:useCase:PlaceOrder',
-        target: 'orders:repository:FraudGateway',
-        type: 'sync',
-      },
-    ])
-    expect(result.externalLinks).toStrictEqual([])
-  })
-
-  it('keeps internal link when httpCall serviceName matches internal domain and route matches a unique api component', () => {
+  it('keeps internal link when httpCall serviceName matches internal domain and route plus method match a unique api component', () => {
     const filePath = '/src/http.ts'
     const source = buildComponent('PlaceOrderBFFUseCase', filePath, 1, { domain: 'bff' })
     const httpCall = buildComponent('placeOrder', filePath, 2, {
@@ -104,12 +71,16 @@ describe('rewriteHttpCallLinks', () => {
       metadata: {
         serviceName: 'orders',
         route: '/orders',
+        method: 'POST',
       },
     })
     const internalTarget = buildComponent('handle', filePath, 3, {
       type: 'api',
       domain: 'orders',
-      metadata: { route: '/orders' },
+      metadata: {
+        route: '/orders',
+        method: 'POST',
+      },
     })
 
     const result = rewriteHttpCallLinks(
@@ -127,6 +98,56 @@ describe('rewriteHttpCallLinks', () => {
       {
         source: 'bff:useCase:PlaceOrderBFFUseCase',
         target: 'orders:api:handle',
+        type: 'sync',
+      },
+    ])
+    expect(result.externalLinks).toStrictEqual([])
+  })
+
+  it('keeps internal link to the api with matching method when multiple apis share a route', () => {
+    const filePath = '/src/http.ts'
+    const source = buildComponent('PlaceOrderBFFUseCase', filePath, 1, { domain: 'bff' })
+    const httpCall = buildComponent('placeOrder', filePath, 2, {
+      type: 'httpCall',
+      domain: 'bff',
+      metadata: {
+        serviceName: 'orders',
+        route: '/orders',
+        method: 'POST',
+      },
+    })
+    const getOrdersApi = buildComponent('listOrders', filePath, 3, {
+      type: 'api',
+      domain: 'orders',
+      metadata: {
+        route: '/orders',
+        method: 'GET',
+      },
+    })
+    const createOrderApi = buildComponent('createOrder', filePath, 4, {
+      type: 'api',
+      domain: 'orders',
+      metadata: {
+        route: '/orders',
+        method: 'POST',
+      },
+    })
+
+    const result = rewriteHttpCallLinks(
+      [
+        {
+          source: 'bff:useCase:PlaceOrderBFFUseCase',
+          target: 'bff:httpCall:placeOrder',
+          type: 'sync',
+        },
+      ],
+      [source, httpCall, getOrdersApi, createOrderApi],
+    )
+
+    expect(result.links).toStrictEqual([
+      {
+        source: 'bff:useCase:PlaceOrderBFFUseCase',
+        target: 'orders:api:createOrder',
         type: 'sync',
       },
     ])
@@ -223,42 +244,6 @@ describe('rewriteHttpCallLinks', () => {
         type: 'sync',
       },
     ])
-  })
-
-  it('throws when httpCall serviceName matches multiple internal components', () => {
-    const filePath = '/src/http.ts'
-    const source = buildComponent('PlaceOrder', filePath, 1)
-    const httpCall = buildComponent('check', filePath, 2, {
-      type: 'httpCall',
-      metadata: { serviceName: 'FraudGateway' },
-    })
-    const repositoryTarget = buildComponent('FraudGateway', filePath, 3, { type: 'repository' })
-    const useCaseTarget = buildComponent('FraudGateway', filePath, 4, { type: 'useCase' })
-
-    expect(() =>
-      rewriteHttpCallLinks(
-        [
-          {
-            source: 'orders:useCase:PlaceOrder',
-            target: 'orders:httpCall:check',
-            type: 'sync',
-          },
-        ],
-        [source, httpCall, repositoryTarget, useCaseTarget],
-      ),
-    ).toThrowError(/exactly one internal component/)
-    expect(() =>
-      rewriteHttpCallLinks(
-        [
-          {
-            source: 'orders:useCase:PlaceOrder',
-            target: 'orders:httpCall:check',
-            type: 'sync',
-          },
-        ],
-        [source, httpCall, repositoryTarget, useCaseTarget],
-      ),
-    ).toThrow(ConnectionDetectionError)
   })
 
   it('throws when httpCall serviceName metadata is missing', () => {
