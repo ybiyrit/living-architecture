@@ -94,6 +94,41 @@
           "extract": {
             "publishedEventType": { "fromParameterType": { "position": 0 } }
           }
+        },
+        "httpCall": {
+          "find": "methods",
+          "where": {
+            "and": [
+              {
+                "hasDecorator": {
+                  "name": "HttpCall",
+                  "from": "@living-architecture/riviere-extract-conventions"
+                }
+              },
+              {
+                "inClassWith": {
+                  "hasDecorator": {
+                    "name": "HttpClient",
+                    "from": "@living-architecture/riviere-extract-conventions"
+                  }
+                }
+              }
+            ]
+          },
+          "extract": {
+            "serviceName": {
+              "fromClassDecoratorArg": {
+                "decorator": "HttpClient",
+                "position": 0
+              }
+            },
+            "route": {
+              "fromDecoratorArg": {
+                "decorator": "HttpCall",
+                "position": 0
+              }
+            }
+          }
         }
       }
     }

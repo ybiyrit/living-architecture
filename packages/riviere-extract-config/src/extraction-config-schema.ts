@@ -96,10 +96,28 @@ export interface FromPropertyExtractionRule {
 /** Extracts value from decorator argument. */
 export interface FromDecoratorArgExtractionRule {
   fromDecoratorArg: {
+    decorator?: string
     position?: number
     name?: string
     transform?: Transform
   }
+}
+
+/** Extracts value from decorator argument on the containing class. */
+export interface FromClassDecoratorArgExtractionRule {
+  fromClassDecoratorArg:
+    | {
+      decorator: string
+      position: number
+      name?: never
+      transform?: Transform
+    }
+    | {
+      decorator: string
+      name: string
+      position?: never
+      transform?: Transform
+    }
 }
 
 /** Extracts value from the decorator name itself. */
@@ -146,6 +164,7 @@ export type ExtractionRule =
   | FromFilePathExtractionRule
   | FromPropertyExtractionRule
   | FromDecoratorArgExtractionRule
+  | FromClassDecoratorArgExtractionRule
   | FromDecoratorNameExtractionRule
   | FromGenericArgExtractionRule
   | FromMethodSignatureExtractionRule
