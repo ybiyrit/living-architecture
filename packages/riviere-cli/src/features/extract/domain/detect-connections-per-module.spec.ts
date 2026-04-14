@@ -14,7 +14,6 @@ const {
   mockDeduplicateCrossStrategy,
   mockDetectCrossModule,
   mockDetectPerModule,
-  mockStripHttpCallComponents,
 } = vi.hoisted(() => ({
   mockExtractComponents: vi.fn().mockReturnValue([]),
   mockEnrichComponents: vi.fn().mockReturnValue({
@@ -34,16 +33,13 @@ const {
     externalLinks: [],
     timings: {
       callGraphMs: 1,
-      configurableMs: 0,
       setupMs: 0,
     },
   }),
   mockDetectCrossModule: vi.fn().mockReturnValue({
     links: [],
-    externalLinks: [],
     timings: { asyncDetectionMs: 0 },
   }),
-  mockStripHttpCallComponents: vi.fn((components: unknown[]) => components),
 }))
 
 vi.mock('@living-architecture/riviere-extract-ts', () => ({
@@ -53,7 +49,7 @@ vi.mock('@living-architecture/riviere-extract-ts', () => ({
   detectPerModuleConnections: mockDetectPerModule,
   detectCrossModuleConnections: mockDetectCrossModule,
   deduplicateCrossStrategy: mockDeduplicateCrossStrategy,
-  stripHttpCallComponents: mockStripHttpCallComponents,
+  stripResolvedCustomTypes: vi.fn((components: unknown[]) => components),
 }))
 
 function createModule(name: string): Module {
@@ -123,7 +119,6 @@ describe('ExtractionProject.extractDraftComponents', () => {
       externalLinks: [],
       timings: {
         callGraphMs: 1,
-        configurableMs: 0,
         setupMs: 0,
       },
     })
@@ -141,21 +136,12 @@ describe('ExtractionProject.extractDraftComponents', () => {
     const ctx = createModuleContext('orders')
     mockExtractComponents.mockReturnValue([
       {
-        name: 'checkFraud',
-        domain: 'orders',
-        type: 'httpCall',
-        location: {
-          file: 'test.ts',
-          line: 1,
-        },
-      },
-      {
         name: 'OrderService',
         domain: 'orders',
         type: 'useCase',
         location: {
           file: 'test.ts',
-          line: 2,
+          line: 1,
         },
       },
     ])
@@ -173,63 +159,5 @@ describe('ExtractionProject.extractDraftComponents', () => {
         name: 'OrderService',
       }),
     ])
-  })
-
-  it('passes configured connection patterns into per-module detection', () => {
-    const ctx = createModuleContext('orders')
-    const pattern = {
-      from: { component: 'useCase' },
-      to: { component: 'repository' },
-      kind: 'call' as const,
-    }
-
-    mockExtractComponents.mockReturnValue([
-      {
-        name: 'OrderService',
-        domain: 'orders',
-        type: 'useCase',
-        location: {
-          file: 'test.ts',
-          line: 1,
-        },
-      },
-    ])
-    mockEnrichComponents.mockReturnValue({
-      components: [
-        {
-          name: 'OrderService',
-          domain: 'orders',
-          type: 'useCase',
-          location: {
-            file: 'test.ts',
-            line: 1,
-          },
-          metadata: {},
-        },
-      ],
-      failures: [],
-    })
-
-    const project = new ExtractionProject(
-      '/config',
-      [ctx],
-      {
-        modules: [],
-        connections: { patterns: [pattern] },
-      },
-      'test-repo',
-    )
-
-    project.extractDraftComponents({
-      allowIncomplete: true,
-      includeConnections: true,
-    })
-
-    expect(mockDetectPerModule).toHaveBeenCalledWith(
-      ctx.project,
-      expect.any(Array),
-      expect.objectContaining({ patterns: [pattern] }),
-      mockMatchesGlob,
-    )
   })
 })

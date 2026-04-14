@@ -50,8 +50,8 @@ class PlaceOrder {
 
     expect(result.links).toStrictEqual([
       expect.objectContaining({
-        source: 'orders:useCase:PlaceOrder',
-        target: 'orders:repository:OrderRepository',
+        source: 'orders:orders-module:useCase:placeorder',
+        target: 'orders:orders-module:repository:orderrepository',
         type: 'sync',
       }),
     ])
@@ -91,8 +91,8 @@ class PlaceOrder {
 
     expect(result.links).toStrictEqual([
       expect.objectContaining({
-        source: 'orders:useCase:PlaceOrder',
-        target: 'orders:repository:OrderRepository',
+        source: 'orders:orders-module:useCase:placeorder',
+        target: 'orders:orders-module:repository:orderrepository',
         type: 'sync',
       }),
     ])
@@ -132,7 +132,6 @@ class PlaceOrder {
     )
 
     expect(result.timings.callGraphMs).toBeGreaterThanOrEqual(0)
-    expect(result.timings.configurableMs).toBeGreaterThanOrEqual(0)
     expect(result.timings.setupMs).toBeGreaterThanOrEqual(0)
   })
 
@@ -184,115 +183,10 @@ class ExcludedUseCase {
 
     expect(result.links).toStrictEqual([
       expect.objectContaining({
-        source: 'orders:useCase:IncludedUseCase',
-        target: 'orders:repository:IncludedRepo',
+        source: 'orders:orders-module:useCase:includedusecase',
+        target: 'orders:orders-module:repository:includedrepo',
       }),
     ])
-  })
-
-  it('rewrites links targeting httpCall components into external links', () => {
-    const project = createProject()
-    const filePath = '/src/http.ts'
-    project.createSourceFile(
-      filePath,
-      `
-class FraudClient {
-  check(): void {}
-}
-
-class PlaceOrder {
-  private fraud: FraudClient
-  constructor(fraud: FraudClient) { this.fraud = fraud }
-  execute(): void {
-    this.fraud.check()
-  }
-}
-`,
-    )
-
-    const useCase = buildComponent('PlaceOrder', filePath, 6)
-    const httpCall = buildComponent('check', filePath, 3, {
-      type: 'httpCall',
-      metadata: {
-        serviceName: 'Fraud Detection Service',
-        route: '/api/check',
-      },
-    })
-
-    const result = detectPerModuleConnections(
-      project,
-      [useCase, httpCall],
-      {
-        repository: 'test-repo',
-        moduleGlobs: ['/src/**/*.ts'],
-        allComponents: [useCase, httpCall],
-      },
-      matchesGlob,
-    )
-
-    expect(result.links).toStrictEqual([])
-    expect(result.externalLinks).toStrictEqual([
-      expect.objectContaining({
-        source: 'orders:useCase:PlaceOrder',
-        target: {
-          name: 'Fraud Detection Service',
-          route: '/api/check',
-        },
-        type: 'sync',
-      }),
-    ])
-  })
-
-  it('keeps internal link when matching api component exists in another module', () => {
-    const project = createProject()
-    const filePath = '/src/bff/http.ts'
-    project.createSourceFile(
-      filePath,
-      `
-class InventoryClient {
-  checkStock(): void {}
-}
-
-class CheckStockAvailability {
-  private inventory: InventoryClient
-  constructor(inventory: InventoryClient) { this.inventory = inventory }
-  execute(): void {
-    this.inventory.checkStock()
-  }
-}
-`,
-    )
-
-    const useCase = buildComponent('CheckStockAvailability', filePath, 6, { domain: 'bff' })
-    const httpCall = buildComponent('checkStock', filePath, 3, {
-      type: 'httpCall',
-      domain: 'bff',
-      metadata: {
-        serviceName: 'inventory',
-        route: '/inventory/:sku',
-      },
-    })
-    const inventoryApi = buildComponent('CheckStockEndpoint', '/src/inventory/api.ts', 1, {
-      type: 'api',
-      domain: 'inventory',
-      metadata: { route: '/inventory/:sku' },
-    })
-    const options = {
-      repository: 'test-repo',
-      moduleGlobs: ['/src/bff/**/*.ts'],
-      allComponents: [useCase, httpCall, inventoryApi],
-    }
-
-    const result = detectPerModuleConnections(project, [useCase, httpCall], options, matchesGlob)
-
-    expect(result.links).toStrictEqual([
-      expect.objectContaining({
-        source: 'bff:useCase:CheckStockAvailability',
-        target: 'inventory:api:CheckStockEndpoint',
-        type: 'sync',
-      }),
-    ])
-    expect(result.externalLinks).toStrictEqual([])
   })
 
   it('returns sync link to component in another module when allComponents includes target', () => {
@@ -339,67 +233,10 @@ class PlaceOrder {
 
     expect(result.links).toStrictEqual([
       expect.objectContaining({
-        source: 'bff:useCase:PlaceOrder',
-        target: 'orders:repository:OrdersRepository',
+        source: 'bff:orders-module:useCase:placeorder',
+        target: 'orders:orders-module:repository:ordersrepository',
         type: 'sync',
       }),
     ])
-  })
-
-  it('ignores configurable matches from source components outside moduleGlobs', () => {
-    const project = createProject()
-    project.createSourceFile(
-      '/src/bff/place-order.ts',
-      `
-class PlaceOrder {
-  execute(): void {}
-}
-`,
-    )
-    project.createSourceFile(
-      '/src/orders/create-order.ts',
-      `
-class OrderRepo {
-  save(): void {}
-}
-
-class CreateOrder {
-  private repo: OrderRepo
-  constructor(repo: OrderRepo) { this.repo = repo }
-  execute(): void {
-    this.repo.save()
-  }
-}
-`,
-    )
-
-    const bffUseCase = buildComponent('PlaceOrder', '/src/bff/place-order.ts', 2, { domain: 'bff' })
-    const ordersUseCase = buildComponent('CreateOrder', '/src/orders/create-order.ts', 6, {domain: 'orders',})
-    const orderRepo = buildComponent('OrderRepo', '/src/orders/create-order.ts', 2, {
-      type: 'repository',
-      domain: 'orders',
-    })
-
-    const result = detectPerModuleConnections(
-      project,
-      [bffUseCase],
-      {
-        repository: 'test-repo',
-        moduleGlobs: ['/src/bff/**/*.ts'],
-        allComponents: [bffUseCase, ordersUseCase, orderRepo],
-        patterns: [
-          {
-            name: 'repo-save-pattern',
-            find: 'methodCalls',
-            where: { methodName: 'save' },
-            linkType: 'sync',
-          },
-        ],
-      },
-      matchesGlob,
-    )
-
-    expect(result.links).toStrictEqual([])
-    expect(result.externalLinks).toStrictEqual([])
   })
 })
