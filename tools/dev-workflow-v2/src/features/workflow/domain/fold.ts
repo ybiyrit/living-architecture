@@ -57,7 +57,6 @@ function applyReviewEvent(state: WorkflowState, event: WorkflowEvent): WorkflowS
       return {
         ...state,
         feedbackAddressed: true,
-        feedbackAddressedCount: event.addressedCount,
       }
   }
 }
@@ -81,11 +80,6 @@ function applyRecordingEvent(state: WorkflowState, event: WorkflowEvent): Workfl
         ...state,
         prNumber: event.prNumber,
         prUrl: event.prUrl,
-      }
-    case 'reflection-written':
-      return {
-        ...state,
-        reflectionPath: event.path,
       }
     case 'task-check-passed':
       return {

@@ -9,7 +9,7 @@ export const STATE_NAMES = [
   'REVIEWING',
   'SUBMITTING_PR',
   'AWAITING_CI',
-  'CHECKING_FEEDBACK',
+  'AWAITING_PR_FEEDBACK',
   'ADDRESSING_FEEDBACK',
   'REFLECTING',
   'COMPLETE',
@@ -38,8 +38,6 @@ export function createWorkflowStateSchema<T extends readonly [string, ...string[
     feedbackClean: z.boolean(),
     feedbackAddressed: z.boolean(),
     feedbackUnresolvedCount: z.number().optional(),
-    feedbackAddressedCount: z.number().optional(),
-    reflectionPath: z.string().optional(),
     preBlockedState: z.string().optional(),
     transcriptPath: z.string().optional(),
   })
@@ -62,8 +60,6 @@ export type WorkflowState = {
   feedbackClean: boolean
   feedbackAddressed: boolean
   feedbackUnresolvedCount?: number | undefined
-  feedbackAddressedCount?: number | undefined
-  reflectionPath?: string | undefined
   preBlockedState?: string | undefined
   transcriptPath?: string | undefined
 }
@@ -82,10 +78,7 @@ export type WorkflowOperation =
   | 'record-pr'
   | 'record-ci-passed'
   | 'record-ci-failed'
-  | 'record-feedback-clean'
-  | 'record-feedback-exists'
-  | 'record-feedback-addressed'
-  | 'record-reflection'
+  | 'verify-feedback-addressed'
 
 /** @riviere-role value-object */
 export type ConcreteStateDefinition = WorkflowStateDefinition<

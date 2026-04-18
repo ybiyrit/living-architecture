@@ -199,6 +199,18 @@ describe('WORKFLOW_EVENT_SCHEMA — feedback-checked', () => {
       at: AT,
       clean: false,
       unresolvedCount: 3,
+      reviewDecision: 'CHANGES_REQUESTED',
+    })
+    expect(result.type).toStrictEqual('feedback-checked')
+  })
+
+  it('accepts dirty payload with null reviewDecision', () => {
+    const result = WORKFLOW_EVENT_SCHEMA.parse({
+      type: 'feedback-checked',
+      at: AT,
+      clean: false,
+      unresolvedCount: 0,
+      reviewDecision: null,
     })
     expect(result.type).toStrictEqual('feedback-checked')
   })
@@ -214,46 +226,16 @@ describe('WORKFLOW_EVENT_SCHEMA — feedback-checked', () => {
 })
 
 describe('WORKFLOW_EVENT_SCHEMA — feedback-addressed', () => {
-  it('accepts valid payload with addressedCount', () => {
+  it('accepts valid payload', () => {
     const result = WORKFLOW_EVENT_SCHEMA.parse({
       type: 'feedback-addressed',
       at: AT,
-      addressedCount: 3,
     })
     expect(result.type).toStrictEqual('feedback-addressed')
   })
 
-  it('rejects missing addressedCount', () => {
-    expect(() =>
-      WORKFLOW_EVENT_SCHEMA.parse({
-        type: 'feedback-addressed',
-        at: AT,
-      }),
-    ).toThrow('Required')
-  })
-
   it('rejects missing at', () => {
     expect(() => WORKFLOW_EVENT_SCHEMA.parse({ type: 'feedback-addressed' })).toThrow('Required')
-  })
-})
-
-describe('WORKFLOW_EVENT_SCHEMA — reflection-written', () => {
-  it('accepts valid payload', () => {
-    const result = WORKFLOW_EVENT_SCHEMA.parse({
-      type: 'reflection-written',
-      at: AT,
-      path: '/test-output/r.md',
-    })
-    expect(result.type).toStrictEqual('reflection-written')
-  })
-
-  it('rejects missing path', () => {
-    expect(() =>
-      WORKFLOW_EVENT_SCHEMA.parse({
-        type: 'reflection-written',
-        at: AT,
-      }),
-    ).toThrow('Required')
   })
 })
 

@@ -66,18 +66,12 @@ const FEEDBACK_CHECKED_SCHEMA = z.object({
   at: z.string(),
   clean: z.boolean(),
   unresolvedCount: z.number().optional(),
+  reviewDecision: z.string().nullable().optional(),
 })
 
 const FEEDBACK_ADDRESSED_SCHEMA = z.object({
   type: z.literal('feedback-addressed'),
   at: z.string(),
-  addressedCount: z.number(),
-})
-
-const REFLECTION_WRITTEN_SCHEMA = z.object({
-  type: z.literal('reflection-written'),
-  at: z.string(),
-  path: z.string(),
 })
 
 const TASK_CHECK_PASSED_SCHEMA = z.object({
@@ -115,7 +109,6 @@ export const WORKFLOW_EVENT_SCHEMA = z.discriminatedUnion('type', [
   CI_COMPLETED_SCHEMA,
   FEEDBACK_CHECKED_SCHEMA,
   FEEDBACK_ADDRESSED_SCHEMA,
-  REFLECTION_WRITTEN_SCHEMA,
   TASK_CHECK_PASSED_SCHEMA,
   BASH_CHECKED_SCHEMA,
   WRITE_CHECKED_SCHEMA,

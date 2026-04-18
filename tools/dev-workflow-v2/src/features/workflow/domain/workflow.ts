@@ -2,9 +2,13 @@ import type {
   PreconditionResult,
   GitInfo,
   RecordingOpDefinition,
+  TransitionContext,
 } from '@nt-ai-lab/deterministic-agent-workflow-dsl'
 import {
-  pass, fail, defineRecordingOps 
+  pass,
+  fail,
+  defineRecordingOps,
+  checkOperationGate,
 } from '@nt-ai-lab/deterministic-agent-workflow-dsl'
 import type { BaseEvent } from '@nt-ai-lab/deterministic-agent-workflow-engine'
 import { WorkflowStateError } from '@nt-ai-lab/deterministic-agent-workflow-engine'
@@ -21,6 +25,12 @@ import {
   applyEvent, EMPTY_STATE 
 } from './fold'
 import type { PRFeedbackResult } from '../infra/external-clients/github/get-pr-feedback'
+
+const PR_FEEDBACK_POLL_INTERVAL_MS = 15_000
+const PR_FEEDBACK_TIMEOUT_MS = 300_000
+const PR_FEEDBACK_MAX_ATTEMPTS =
+  Math.floor(PR_FEEDBACK_TIMEOUT_MS / PR_FEEDBACK_POLL_INTERVAL_MS) + 1
+const REQUIRED_CONSECUTIVE_CLEAN_CODERABBIT_POLLS = 2
 
 const RECORDING_OPS_MAP: Record<string, RecordingOpDefinition<readonly never[]>> = {
   'record-issue': {
@@ -77,25 +87,6 @@ const RECORDING_OPS_MAP: Record<string, RecordingOpDefinition<readonly never[]>>
       output,
     }),
   },
-  'record-feedback-clean': {
-    event: 'feedback-checked',
-    payload: () => ({ clean: true }),
-  },
-  'record-feedback-exists': {
-    event: 'feedback-checked',
-    payload: (count: number) => ({
-      clean: false,
-      unresolvedCount: count,
-    }),
-  },
-  'record-feedback-addressed': {
-    event: 'feedback-addressed',
-    payload: (count: number) => ({ addressedCount: count }),
-  },
-  'record-reflection': {
-    event: 'reflection-written',
-    payload: (p: string) => ({ path: p }),
-  },
 }
 
 const RECORDING_OPS = defineRecordingOps<StateName, WorkflowState, WorkflowOperation>(
@@ -107,7 +98,52 @@ const RECORDING_OPS = defineRecordingOps<StateName, WorkflowState, WorkflowOpera
 export type WorkflowDeps = {
   readonly getGitInfo: () => GitInfo
   readonly getPrFeedback: (prNumber: number) => PRFeedbackResult
+  readonly sleepMs: (ms: number) => void
   readonly now: () => string
+}
+
+function diffStateOverrides(
+  stateBefore: WorkflowState,
+  stateAfter: WorkflowState,
+): Record<string, unknown> {
+  const overrides: Record<string, unknown> = {}
+  const beforeEntries = new Map(Object.entries(stateBefore))
+  for (const [key, value] of Object.entries(stateAfter)) {
+    if (key === 'currentStateMachineState') continue
+    if (value !== beforeEntries.get(key)) {
+      overrides[key] = value
+    }
+  }
+  return overrides
+}
+
+function isFeedbackClear(feedback: PRFeedbackResult): boolean {
+  return feedback.reviewDecision !== 'CHANGES_REQUESTED' && feedback.unresolvedCount === 0
+}
+
+function readPrFeedback(
+  getPrFeedback: (prNumber: number) => PRFeedbackResult,
+  prNumber: number,
+):
+  | {
+    ok: true
+    feedback: PRFeedbackResult
+  }
+  | {
+    ok: false
+    reason: string
+  } {
+  try {
+    return {
+      ok: true,
+      feedback: getPrFeedback(prNumber),
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      reason: `Unable to fetch PR feedback: ${String(error)}`,
+    }
+  }
 }
 
 /** @riviere-role domain-service */
@@ -146,12 +182,12 @@ export class Workflow {
     this.pendingEvents = [...this.pendingEvents, workflowEvent]
     this.state = applyEvent(this.state, workflowEvent)
 
-    if (
-      workflowEvent.type === 'transitioned' &&
-      workflowEvent.to === 'CHECKING_FEEDBACK' &&
-      this.state.prNumber !== undefined
-    ) {
-      this.autoFetchFeedback(this.state.prNumber)
+    if (workflowEvent.type === 'transitioned' && workflowEvent.to === 'AWAITING_PR_FEEDBACK') {
+      if (this.state.prNumber === undefined) {
+        this.appendAutomaticTransition('BLOCKED')
+        return
+      }
+      this.awaitPrFeedback(this.state.prNumber)
     }
   }
 
@@ -173,11 +209,14 @@ export class Workflow {
     return this.state.transcriptPath
   }
 
-  registerAgent(_agentType: string, _agentId: string): PreconditionResult {
+  registerAgent(agentType: string, agentId: string): PreconditionResult {
+    void agentType
+    void agentId
     return pass()
   }
 
-  handleTeammateIdle(_agentName: string): PreconditionResult {
+  handleTeammateIdle(agentName: string): PreconditionResult {
+    void agentName
     return pass()
   }
 
@@ -188,22 +227,128 @@ export class Workflow {
     return pass()
   }
 
-  private autoFetchFeedback(prNumber: number): void {
-    const feedback = this.deps.getPrFeedback(prNumber)
-    if (feedback.unresolvedCount === 0) {
-      this.append({
-        type: 'feedback-checked',
-        at: this.deps.now(),
-        clean: true,
-      })
-    } else {
-      this.append({
-        type: 'feedback-checked',
-        at: this.deps.now(),
-        clean: false,
-        unresolvedCount: feedback.unresolvedCount,
-      })
+  verifyFeedbackAddressed(): PreconditionResult {
+    const gate = checkOperationGate('verify-feedback-addressed', this.state, WORKFLOW_REGISTRY)
+    if (!gate.pass) return gate
+    if (this.state.prNumber === undefined) {
+      return fail('prNumber not set. Record the PR before verifying feedback.')
     }
+
+    const feedbackResult = readPrFeedback(this.deps.getPrFeedback, this.state.prNumber)
+    if (!feedbackResult.ok) return fail(feedbackResult.reason)
+    const { feedback } = feedbackResult
+
+    const clean = isFeedbackClear(feedback)
+    this.append({
+      type: 'feedback-checked',
+      at: this.deps.now(),
+      clean,
+      unresolvedCount: feedback.unresolvedCount,
+      reviewDecision: feedback.reviewDecision,
+    })
+
+    if (feedback.reviewDecision === 'CHANGES_REQUESTED' && feedback.unresolvedCount > 0) {
+      return fail(
+        `PR still has CHANGES_REQUESTED review status and ${feedback.unresolvedCount} unresolved feedback threads. Resolve all feedback or transition to BLOCKED.`,
+      )
+    }
+    if (feedback.reviewDecision === 'CHANGES_REQUESTED') {
+      return fail(
+        'PR still has CHANGES_REQUESTED review status. Resolve all feedback or transition to BLOCKED.',
+      )
+    }
+    if (feedback.unresolvedCount > 0) {
+      return fail(
+        `PR still has ${feedback.unresolvedCount} unresolved feedback threads. Resolve all feedback or transition to BLOCKED.`,
+      )
+    }
+
+    this.append({
+      type: 'feedback-addressed',
+      at: this.deps.now(),
+    })
+    return pass()
+  }
+
+  private awaitPrFeedback(prNumber: number): void {
+    this.pollPrFeedback(prNumber, PR_FEEDBACK_MAX_ATTEMPTS, 0)
+  }
+
+  private pollPrFeedback(
+    prNumber: number,
+    attemptsRemaining: number,
+    consecutiveCleanPolls: number,
+  ): void {
+    const feedbackResult = readPrFeedback(this.deps.getPrFeedback, prNumber)
+    if (!feedbackResult.ok) {
+      this.appendAutomaticTransition('BLOCKED')
+      return
+    }
+
+    const { feedback } = feedbackResult
+    if (!feedback.coderabbitReviewSeen) {
+      this.scheduleNextPrFeedbackPoll(prNumber, attemptsRemaining, 0)
+      return
+    }
+
+    const clean = isFeedbackClear(feedback)
+    const nextConsecutiveCleanPolls = clean ? consecutiveCleanPolls + 1 : 0
+    if (
+      clean &&
+      // On the last allowed poll, a newly clean CodeRabbit result is accepted instead of timing out a PR that just became ready.
+      nextConsecutiveCleanPolls < REQUIRED_CONSECUTIVE_CLEAN_CODERABBIT_POLLS &&
+      attemptsRemaining > 1
+    ) {
+      this.deps.sleepMs(PR_FEEDBACK_POLL_INTERVAL_MS)
+      this.pollPrFeedback(prNumber, attemptsRemaining - 1, nextConsecutiveCleanPolls)
+      return
+    }
+
+    this.append({
+      type: 'feedback-checked',
+      at: this.deps.now(),
+      clean,
+      unresolvedCount: feedback.unresolvedCount,
+      reviewDecision: feedback.reviewDecision,
+    })
+    this.appendAutomaticTransition(clean ? 'REFLECTING' : 'ADDRESSING_FEEDBACK')
+  }
+
+  private scheduleNextPrFeedbackPoll(
+    prNumber: number,
+    attemptsRemaining: number,
+    consecutiveCleanPolls: number,
+  ): void {
+    if (attemptsRemaining <= 1) {
+      this.appendAutomaticTransition('BLOCKED')
+      return
+    }
+
+    this.deps.sleepMs(PR_FEEDBACK_POLL_INTERVAL_MS)
+    this.pollPrFeedback(prNumber, attemptsRemaining - 1, consecutiveCleanPolls)
+  }
+
+  private appendAutomaticTransition(to: StateName): void {
+    const from = this.state.currentStateMachineState
+    const stateBefore = this.state
+    const context: TransitionContext<WorkflowState, StateName> = {
+      state: stateBefore,
+      gitInfo: this.deps.getGitInfo(),
+      from,
+      to,
+    }
+    const targetDef = getStateDefinition(to)
+    const stateAfter =
+      targetDef.onEntry === undefined ? stateBefore : targetDef.onEntry(stateBefore, context)
+    const stateOverrides = diffStateOverrides(stateBefore, stateAfter)
+
+    this.append({
+      type: 'transitioned',
+      at: this.deps.now(),
+      from,
+      to,
+      ...(Object.keys(stateOverrides).length === 0 ? {} : { stateOverrides }),
+    })
   }
 
   private append(event: WorkflowEvent): void {
